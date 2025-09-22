@@ -1,0 +1,4 @@
+/tmp/tmpdoyj9gdr/wheel/platlib/deepmd/lib/libdeepmd_op_pt.so
+/tmp/tmpdoyj9gdr/wheel/platlib/deepmd/lib/libdeepmd.so
+/tmp/tmpdoyj9gdr/wheel/platlib/deepmd/lib/run_config.ini
+/tmp/tmpdoyj9gdr/wheel/platlib/deepmd/lib/__init__.py

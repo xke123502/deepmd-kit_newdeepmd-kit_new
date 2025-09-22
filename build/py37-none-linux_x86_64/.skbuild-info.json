@@ -1,0 +1,8 @@
+{
+  "source_dir": "/aisi/mnt/data_nas/jwzhou/deepmd-kit/source",
+  "build_dir": "/aisi/mnt/data_nas/jwzhou/deepmd-kit/build/py37-none-linux_x86_64",
+  "cmake_path": "/root/cmake-3.29.2-linux-x86_64/bin/cmake",
+  "skbuild_path": "/tmp/pip-build-env-u689ibfc/overlay/lib/python3.11/site-packages/scikit_build_core",
+  "skbuild_version": "0.10.7",
+  "python_executable": "/aisi/mnt/data_nas/jwzhou/conda_env/mad/bin/python3.11"
+}

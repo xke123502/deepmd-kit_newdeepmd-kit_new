@@ -1,0 +1,93 @@
+To get the best performance, it is recommended to adjust the number of threads by setting the environment variables OMP_NUM_THREADS, DP_INTRA_OP_PARALLELISM_THREADS, and DP_INTER_OP_PARALLELISM_THREADS. See https://deepmd.rtfd.io/parallelism/ for more information.
+/opt/mamba/lib/python3.10/site-packages/nequip/__init__.py:20: UserWarning: !! PyTorch version 2.7.0 found. Upstream issues in PyTorch versions 1.13.* and 2.* have been seen to cause unusual performance degredations on some CUDA systems that become worse over time; see https://github.com/mir-group/nequip/discussions/311. The best tested PyTorch version to use with CUDA devices is 1.11; while using other versions if you observe this problem, an unexpected lack of this problem, or other strange behavior, please post in the linked GitHub issue.
+  warnings.warn(
+[2025-09-21 05:35:55,135] DEEPMD INFO    DeePMD version: 3.1.0
+[2025-09-21 05:35:55,135] DEEPMD INFO    Configuration path: ./input_mad.json
+[2025-09-21 05:35:55,166] DEEPMD INFO     _____               _____   __  __  _____           _     _  _   
+[2025-09-21 05:35:55,166] DEEPMD INFO    |  __ \             |  __ \ |  \/  ||  __ \         | |   (_)| |  
+[2025-09-21 05:35:55,166] DEEPMD INFO    | |  | |  ___   ___ | |__) || \  / || |  | | ______ | | __ _ | |_ 
+[2025-09-21 05:35:55,166] DEEPMD INFO    | |  | | / _ \ / _ \|  ___/ | |\/| || |  | ||______|| |/ /| || __|
+[2025-09-21 05:35:55,166] DEEPMD INFO    | |__| ||  __/|  __/| |     | |  | || |__| |        |   < | || |_ 
+[2025-09-21 05:35:55,166] DEEPMD INFO    |_____/  \___| \___||_|     |_|  |_||_____/         |_|\_\|_| \__|
+[2025-09-21 05:35:55,166] DEEPMD INFO    Please read and cite:
+[2025-09-21 05:35:55,166] DEEPMD INFO    Wang, Zhang, Han and E, Comput.Phys.Comm. 228, 178-184 (2018)
+[2025-09-21 05:35:55,166] DEEPMD INFO    Zeng et al, J. Chem. Phys., 159, 054801 (2023)
+[2025-09-21 05:35:55,166] DEEPMD INFO    Zeng et al, J. Chem. Theory Comput., 21, 4375-4385 (2025)
+[2025-09-21 05:35:55,166] DEEPMD INFO    See https://deepmd.rtfd.io/credits/ for details.
+[2025-09-21 05:35:55,166] DEEPMD INFO    ---------------------------------------------------------------------------------------------------
+[2025-09-21 05:35:55,166] DEEPMD INFO    installed to:          /opt/mamba/lib/python3.10/site-packages/deepmd
+[2025-09-21 05:35:55,166] DEEPMD INFO                           /aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd
+[2025-09-21 05:35:55,167] DEEPMD INFO    source:                
+[2025-09-21 05:35:55,167] DEEPMD INFO    source branch:         
+[2025-09-21 05:35:55,167] DEEPMD INFO    source commit:         
+[2025-09-21 05:35:55,167] DEEPMD INFO    source commit at:      
+[2025-09-21 05:35:55,167] DEEPMD INFO    use float prec:        double
+[2025-09-21 05:35:55,167] DEEPMD INFO    build variant:         cpu
+[2025-09-21 05:35:55,167] DEEPMD INFO    Backend:               PyTorch
+[2025-09-21 05:35:55,167] DEEPMD INFO    PT ver:                v2.7.0+cu126-g13417947453
+[2025-09-21 05:35:55,167] DEEPMD INFO    Enable custom OP:      True
+[2025-09-21 05:35:55,167] DEEPMD INFO    build with PT ver:     2.7.0
+[2025-09-21 05:35:55,167] DEEPMD INFO    build with PT inc:     /opt/mamba/lib/python3.10/site-packages/torch/include
+[2025-09-21 05:35:55,167] DEEPMD INFO                           /opt/mamba/lib/python3.10/site-packages/torch/include/torch/csrc/api/include
+[2025-09-21 05:35:55,167] DEEPMD INFO    build with PT lib:     /opt/mamba/lib/python3.10/site-packages/torch/lib
+[2025-09-21 05:35:55,167] DEEPMD INFO    running on:            di-20250805124407-b7wkn
+[2025-09-21 05:35:55,167] DEEPMD INFO    computing device:      cuda:0
+[2025-09-21 05:35:55,167] DEEPMD INFO    CUDA_VISIBLE_DEVICES:  unset
+[2025-09-21 05:35:55,167] DEEPMD INFO    Count of visible GPUs: 1
+[2025-09-21 05:35:55,167] DEEPMD INFO    num_intra_threads:     0
+[2025-09-21 05:35:55,167] DEEPMD INFO    num_inter_threads:     0
+[2025-09-21 05:35:55,167] DEEPMD INFO    ---------------------------------------------------------------------------------------------------
+[2025-09-21 05:35:55,260] DEEPMD INFO    Calculate neighbor statistics... (add --skip-neighbor-stat to skip this step)
+[2025-09-21 05:35:55,761] DEEPMD INFO    Adjust batch size from 1024 to 2048
+[2025-09-21 05:35:55,854] DEEPMD INFO    Adjust batch size from 2048 to 4096
+[2025-09-21 05:35:55,925] DEEPMD INFO    Adjust batch size from 4096 to 8192
+[2025-09-21 05:35:56,170] DEEPMD INFO    Adjust batch size from 8192 to 16384
+[2025-09-21 05:35:56,209] DEEPMD INFO    Neighbor statistics: training data with minimal neighbor distance: 0.885439
+[2025-09-21 05:35:56,209] DEEPMD INFO    Neighbor statistics: training data with maximum neighbor size: [108] (cutoff radius: 6.000000)
+[2025-09-21 05:35:56,221] DEEPMD INFO    Adjust batch size from 1024 to 2048
+[2025-09-21 05:35:56,223] DEEPMD INFO    Adjust batch size from 2048 to 4096
+[2025-09-21 05:35:56,226] DEEPMD INFO    Adjust batch size from 4096 to 8192
+[2025-09-21 05:35:56,231] DEEPMD INFO    Adjust batch size from 8192 to 16384
+[2025-09-21 05:35:56,262] DEEPMD INFO    Neighbor statistics: training data with minimal neighbor distance: 0.885439
+[2025-09-21 05:35:56,262] DEEPMD INFO    Neighbor statistics: training data with maximum neighbor size: [39] (cutoff radius: 4.000000)
+[2025-09-21 05:35:56,262] DEEPMD WARNING sel of type 0 is not enough! The expected value is not less than 39, but you set it to 30. The accuracy of your model may get worse.
+[2025-09-21 05:35:56,274] DEEPMD INFO    Constructing DataLoaders from 1 systems
+[2025-09-21 05:35:56,294] DEEPMD INFO    Constructing DataLoaders from 3 systems
+[2025-09-21 05:35:56,421] DEEPMD INFO    ---Summary of DataSystem: training     -----------------------------------------------
+[2025-09-21 05:35:56,421] DEEPMD INFO    found 3 system(s):
+[2025-09-21 05:35:56,422] DEEPMD INFO                                        system  natoms  bch_sz   n_bch       prob  pbc
+[2025-09-21 05:35:56,422] DEEPMD INFO                             ../../data/data_0     192       1      80  2.500e-01    T
+[2025-09-21 05:35:56,422] DEEPMD INFO                             ../../data/data_1     192       1     160  5.000e-01    T
+[2025-09-21 05:35:56,422] DEEPMD INFO                             ../../data/data_2     192       1      80  2.500e-01    T
+[2025-09-21 05:35:56,422] DEEPMD INFO    --------------------------------------------------------------------------------------
+[2025-09-21 05:35:56,429] DEEPMD INFO    ---Summary of DataSystem: validation   -----------------------------------------------
+[2025-09-21 05:35:56,429] DEEPMD INFO    found 1 system(s):
+[2025-09-21 05:35:56,429] DEEPMD INFO                                        system  natoms  bch_sz   n_bch       prob  pbc
+[2025-09-21 05:35:56,429] DEEPMD INFO                             ../../data/data_3     192       1      80  1.000e+00    T
+[2025-09-21 05:35:56,429] DEEPMD INFO    --------------------------------------------------------------------------------------
+[2025-09-21 05:35:56,430] DEEPMD INFO    Start to train 200000 steps.
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Traceback (most recent call last):
+  File "/opt/mamba/bin/dp", line 8, in <module>
+    sys.exit(main())
+  File "/aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd/main.py", line 930, in main
+    deepmd_main(args)
+  File "/opt/mamba/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd/pt/entrypoints/main.py", line 532, in main
+    train(
+  File "/aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd/pt/entrypoints/main.py", line 363, in train
+    trainer.run()
+  File "/aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd/pt/train/training.py", line 987, in run
+    step(step_id)
+  File "/aisi/mnt/data_nas/jwzhou/deepmd-kit/deepmd/pt/train/training.py", line 734, in step
+    torch.nn.utils.clip_grad_norm_(
+  File "/opt/mamba/lib/python3.10/site-packages/torch/nn/utils/clip_grad.py", line 38, in _no_grad_wrapper
+    return func(*args, **kwargs)
+  File "/opt/mamba/lib/python3.10/site-packages/torch/nn/utils/clip_grad.py", line 219, in clip_grad_norm_
+    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
+  File "/opt/mamba/lib/python3.10/site-packages/torch/nn/utils/clip_grad.py", line 38, in _no_grad_wrapper
+    return func(*args, **kwargs)
+  File "/opt/mamba/lib/python3.10/site-packages/torch/nn/utils/clip_grad.py", line 106, in _get_total_norm
+    raise RuntimeError(
+RuntimeError: The total norm of order 2.0 for gradients from `parameters` is non-finite, so it cannot be clipped. To disable this error and scale the gradients by the non-finite norm anyway, set `error_if_nonfinite=False`
