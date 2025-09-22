@@ -681,6 +681,7 @@ def make_embedding_network(T_Network, T_NetworkLayer):
             precision: str = DEFAULT_PRECISION,
             seed: Optional[Union[int, list[int]]] = None,
             bias: bool = True,
+            init: str = "default",  # new added in 2025 0923 - MLP initialization method
         ) -> None:
             layers = []
             i_in = in_dim
@@ -695,6 +696,7 @@ def make_embedding_network(T_Network, T_NetworkLayer):
                         activation_function=activation_function,
                         resnet=True,
                         precision=precision,
+                        init=init,
                         seed=child_seed(seed, idx),
                     ).serialize()
                 )
@@ -786,6 +788,7 @@ def make_fitting_network(T_EmbeddingNet, T_Network, T_NetworkLayer):
             precision: str = DEFAULT_PRECISION,
             bias_out: bool = True,
             seed: Optional[Union[int, list[int]]] = None,
+            init: str = "default",  # new added in 2025 0923 - MLP initialization method
         ) -> None:
             super().__init__(
                 in_dim,
@@ -794,6 +797,7 @@ def make_fitting_network(T_EmbeddingNet, T_Network, T_NetworkLayer):
                 resnet_dt=resnet_dt,
                 precision=precision,
                 seed=seed,
+                init=init,
             )
             i_in = neuron[-1] if len(neuron) > 0 else in_dim
             i_ot = out_dim
@@ -806,6 +810,7 @@ def make_fitting_network(T_EmbeddingNet, T_Network, T_NetworkLayer):
                     activation_function=None,
                     resnet=False,
                     precision=precision,
+                    init=init,
                     seed=child_seed(seed, len(neuron)),
                 )
             )

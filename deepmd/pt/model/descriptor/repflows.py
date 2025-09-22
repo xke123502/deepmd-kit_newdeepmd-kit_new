@@ -231,6 +231,7 @@ class DescrptBlockRepflows(DescriptorBlock):
         use_loc_mapping: bool = True,
         optim_update: bool = True,
         seed: Optional[Union[int, list[int]]] = None,
+        init: str = "default",  # new added in 2025 0923 - MLP initialization method
     ) -> None:
         super().__init__()
         self.e_rcut = float(e_rcut)
@@ -295,10 +296,10 @@ class DescrptBlockRepflows(DescriptorBlock):
         self.seed = seed
 
         self.edge_embd = MLPLayer(
-            1, self.e_dim, precision=precision, seed=child_seed(seed, 0)
+            1, self.e_dim, precision=precision, init=init, seed=child_seed(seed, 0)  # new added in 2025 0923 - Pass init method
         ) # 创建边嵌入
         self.angle_embd = MLPLayer(
-            1, self.a_dim, precision=precision, bias=False, seed=child_seed(seed, 1)
+            1, self.a_dim, precision=precision, bias=False, init=init, seed=child_seed(seed, 1)  # new added in 2025 0923 - Pass init method
         ) # 创建角度嵌入
         layers = []
         for ii in range(nlayers):
@@ -329,6 +330,7 @@ class DescrptBlockRepflows(DescriptorBlock):
                     use_dynamic_sel=self.use_dynamic_sel,
                     sel_reduce_factor=self.sel_reduce_factor,
                     smooth_edge_update=self.smooth_edge_update,
+                    init=init,  # new added in 2025 0923 - Pass MLP initialization method to RepFlowLayer
                     seed=child_seed(child_seed(seed, 1), ii),
                 )
             ) # 创建RepFlow层

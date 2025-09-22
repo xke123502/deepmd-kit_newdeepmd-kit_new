@@ -126,6 +126,8 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
         type_map: Optional[list[str]] = None,
         enable_mad: bool = False, # new added
         mad_cutoff_ratio: float = 0.5, # new added (保留以便后续扩展)
+        mlp_init_method: str = "default",  # new added in 2025 0923 - RepFlow MLP initialization method
+        type_emb_init_method: str = "default",  # new added in 2025 0923 - Type embedding initialization method
     ) -> None:
         super().__init__()
 
@@ -175,6 +177,7 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
             exclude_types=exclude_types,
             env_protection=env_protection,
             precision=precision,
+            init=mlp_init_method,  # new added in 2025 0923 - Pass RepFlow MLP initialization method
             seed=child_seed(seed, 1),
         )
 
@@ -191,6 +194,7 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
             use_econf_tebd=self.use_econf_tebd,
             use_tebd_bias=use_tebd_bias,
             type_map=type_map,
+            init=type_emb_init_method,  # new added in 2025 0923 - Pass type embedding initialization method
         )
         self.concat_output_tebd = concat_output_tebd
         self.precision = precision

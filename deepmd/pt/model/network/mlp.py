@@ -194,6 +194,11 @@ class MLPLayer(nn.Module):
             self._default_uniform_init(
                 bavg=bavg, stddev=stddev, generator=random_generator
             )
+        elif init == "pytorch_normal":
+            # PyTorch nn.Embedding风格的正态分布初始化
+            self._pytorch_normal_init(
+                bavg=bavg, stddev=stddev, generator=random_generator
+            ) # new added in 2025 0923 - PyTorch nn.Embedding compatible initialization
         else:
             raise ValueError(f"Unknown initialization method: {init}")
 
@@ -240,6 +245,33 @@ class MLPLayer(nn.Module):
             normal_(self.bias.data, mean=bavg, std=stddev, generator=generator)
         if self.idt is not None:
             normal_(self.idt.data, mean=0.1, std=0.001, generator=generator)
+
+
+
+    def _pytorch_normal_init(
+        self,
+        bavg: float = 0.0,
+        stddev: float = 1.0,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        """PyTorch正态分布初始化
+        
+        权重矩阵使用PyTorch正态分布初始化：std = stddev / sqrt(fan_in + fan_out)
+        偏置使用正态分布：mean=bavg, std=stddev
+        时间步参数使用小方差正态分布：mean=0.1, std=0.001
+        """
+        normal_(
+            self.matrix.data,
+            mean=bavg,
+            std=stddev,
+            generator=generator,
+        )
+        if self.bias is not None:
+            normal_(self.bias.data, generator=generator)
+        if self.idt is not None:
+            normal_(self.idt.data, mean=0.1, std=0.001, generator=generator)
+
+
 
     def _trunc_normal_init(
         self, scale=1.0, generator: Optional[torch.Generator] = None
@@ -339,6 +371,7 @@ class MLPLayer(nn.Module):
         kaiming_uniform_(self.matrix, a=math.sqrt(5), generator=generator)
         # 偏置保持原来的处理方式或者也用均匀分布
     
+
     def forward(
         self,
         xx: torch.Tensor,

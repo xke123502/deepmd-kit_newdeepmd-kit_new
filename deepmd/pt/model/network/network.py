@@ -253,6 +253,7 @@ class TypeEmbedNet(nn.Module):
         use_econf_tebd=False,
         use_tebd_bias: bool = False,
         type_map=None,
+        init: str = "default",  # new added in 2025 0923 - Type embedding initialization method
     ) -> None:
         """Construct a type embedding net."""
         super().__init__()
@@ -272,6 +273,7 @@ class TypeEmbedNet(nn.Module):
             use_tebd_bias=use_tebd_bias,
             type_map=type_map,
             precision=precision,
+            init=init,
             seed=seed,
         )
         # nn.init.normal_(self.embedding.weight[:-1], mean=bavg, std=stddev)
@@ -373,6 +375,7 @@ class TypeEmbedNetConsistent(nn.Module):
         use_econf_tebd: bool = False,
         use_tebd_bias: bool = False,
         type_map: Optional[list[str]] = None,
+        init: str = "default",  # new added in 2025 0923 - Type embedding initialization method
     ) -> None:
         """Construct a type embedding net."""
         super().__init__()
@@ -403,6 +406,7 @@ class TypeEmbedNetConsistent(nn.Module):
             self.precision,
             self.seed,
             bias=self.use_tebd_bias,
+            init=init,  # new added in 2025 0923 - Pass initialization method to EmbeddingNet
         )
         for param in self.parameters():
             param.requires_grad = trainable

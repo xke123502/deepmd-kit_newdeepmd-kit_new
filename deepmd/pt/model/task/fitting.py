@@ -227,6 +227,7 @@ class GeneralFitting(Fitting):
         remove_vaccum_contribution: Optional[list[bool]] = None,
         type_map: Optional[list[str]] = None,
         use_aparam_as_mask: bool = False,
+        init: str = "default",  # new added in 2025 0923 - Fitting network initialization method
         **kwargs,
     ) -> None:
         super().__init__()
@@ -319,6 +320,7 @@ class GeneralFitting(Fitting):
                     self.resnet_dt,
                     self.precision,
                     bias_out=True,
+                    init=init,  # new added in 2025 0923 - Pass initialization method to FittingNet
                     seed=child_seed(self.seed, ii),
                 )
                 for ii in range(self.ntypes if not self.mixed_types else 1)

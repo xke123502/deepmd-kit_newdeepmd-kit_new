@@ -105,7 +105,8 @@ def type_embedding_args():
     doc_trainable = "If the parameters in the embedding net are trainable"
     doc_use_econf_tebd = "Whether to use electronic configuration type embedding."
     doc_use_tebd_bias = "Whether to use bias in the type embedding layer."
-
+    doc_init_method = 'The initialization method for the type embedding network parameters. Supported options are: "default" (Xavier-style normal distribution, conservative), "kaiming_uniform_normal_dt" (Kaiming uniform for weights, normal for timestep - PyTorch standard), "default_uniform" (Xavier-style but uniform distribution), "pytorch_normal" (PyTorch nn.Embedding style: N(0,1) normal distribution), "kaiming_uniform" (Standard Kaiming uniform), "glorot_uniform" (Xavier uniform), "trunc_normal" (Truncated normal), "normal" (Kaiming normal), "zero" (Zero initialization). Default follows DeepMD original method for stability.'
+    # new added in 2025 0923 - Support for customizable initialization methods
     return [
         Argument("neuron", list[int], optional=True, default=[8], doc=doc_neuron),
         Argument(
@@ -129,6 +130,13 @@ def type_embedding_args():
             default=False,
             doc=doc_use_tebd_bias,
         ),
+        Argument(
+            "init_method",
+            str,
+            optional=True,
+            default="default",
+            doc=doc_only_pt_supported + doc_init_method,
+        ), # new added in 2025 0923 - Type embedding initialization method
     ]
 
 
@@ -1378,6 +1386,9 @@ def descrpt_dpa3_args():
     )
     doc_enable_mad = "Whether to enable MADGap computation. Set to True to compute MADGap values for regularization use."
     doc_mad_cutoff_ratio = "The ratio to distinguish neighbor and remote nodes for MADGap calculation."
+    doc_mlp_init_method = 'The initialization method for MLP layers in RepFlow and other networks. Supported options are: "default" (Xavier-style normal distribution, conservative), "kaiming_uniform_normal_dt" (Kaiming uniform for weights, normal for timestep - PyTorch standard), "default_uniform" (Xavier-style but uniform distribution), "pytorch_normal" (PyTorch nn.Embedding style: N(0,1) normal distribution), "kaiming_uniform" (Standard Kaiming uniform), "glorot_uniform" (Xavier uniform), "trunc_normal" (Truncated normal), "normal" (Kaiming normal), "zero" (Zero initialization). Default follows DeepMD original conservative method for training stability.'
+    doc_type_emb_init_method = 'The initialization method for Type Embedding network. Supported options are: "default" (Xavier-style normal distribution, conservative), "kaiming_uniform_normal_dt" (Kaiming uniform for weights, normal for timestep - PyTorch standard), "default_uniform" (Xavier-style but uniform distribution), "pytorch_normal" (PyTorch nn.Embedding style: N(0,1) normal distribution), "kaiming_uniform" (Standard Kaiming uniform), "glorot_uniform" (Xavier uniform), "trunc_normal" (Truncated normal), "normal" (Kaiming normal), "zero" (Zero initialization). Default follows DeepMD original conservative method for training stability.'
+    # new added in 2025 0923 - Support for customizable initialization methods in DPA3
     return [
         # doc_repflow args
         Argument("repflow", dict, dpa3_repflow_args(), doc=doc_repflow),
@@ -1449,6 +1460,20 @@ def descrpt_dpa3_args():
             default=0.5,
             doc=doc_mad_cutoff_ratio,
         ),
+        Argument(
+            "mlp_init_method",
+            str,
+            optional=True,
+            default="default",
+            doc=doc_only_pt_supported + doc_mlp_init_method,
+        ), # new added in 2025 0923 - RepFlow MLP initialization method
+        Argument(
+            "type_emb_init_method",
+            str,
+            optional=True,
+            default="default",
+            doc=doc_only_pt_supported + doc_type_emb_init_method,
+        ), # new added in 2025 0923 - Type embedding initialization method
     ]
 
 
@@ -1786,7 +1811,8 @@ def fitting_ener():
         "If True, the aparam will not be used in fitting net for embedding."
         "When descrpt is se_a_mask, the aparam will be used as a mask to indicate the input atom is real/virtual. And use_aparam_as_mask should be set to True."
     )
-
+    doc_fitting_init_method = 'The initialization method for MLP layers in the fitting network. Supported options are: "default" (Xavier-style normal distribution, conservative), "kaiming_uniform_normal_dt" (Kaiming uniform for weights, normal for timestep - PyTorch standard), "default_uniform" (Xavier-style but uniform distribution), "pytorch_normal" (PyTorch nn.Embedding style: N(0,1) normal distribution), "kaiming_uniform" (Standard Kaiming uniform), "glorot_uniform" (Xavier uniform), "trunc_normal" (Truncated normal), "normal" (Kaiming normal), "zero" (Zero initialization). Default follows DeepMD original conservative method for training stability.'
+    # new added in 2025 0923 - Support for customizable initialization methods in fitting network
     return [
         Argument("numb_fparam", int, optional=True, default=0, doc=doc_numb_fparam),
         Argument("numb_aparam", int, optional=True, default=0, doc=doc_numb_aparam),
@@ -1840,6 +1866,13 @@ def fitting_ener():
             default=False,
             doc=doc_use_aparam_as_mask,
         ),
+        Argument(
+            "init_method",
+            str,
+            optional=True,
+            default="default",
+            doc=doc_only_pt_supported + doc_fitting_init_method,
+        ), # new added in 2025 0923 - Fitting network initialization method
     ]
 
 

@@ -103,9 +103,11 @@ class RepFlowLayer(torch.nn.Module):
         update_residual_init: str = "const", # 残差初始化方式
         precision: str = "float64",       # 数值精度
         seed: Optional[Union[int, list[int]]] = None, # 随机种子
+        init: str = "default",            # new added in 2025 0923 - MLP层初始化方法
     ) -> None:
         super().__init__()
         self.epsilon = 1e-4  # protection of 1./nnei
+        self.init = init      # 保存初始化方法
         self.e_rcut = float(e_rcut)
         self.e_rcut_smth = float(e_rcut_smth)
         self.ntypes = ntypes
@@ -165,6 +167,7 @@ class RepFlowLayer(torch.nn.Module):
             n_dim,
             n_dim,
             precision=precision,
+            init=init,
             seed=child_seed(seed, 0),
         )
          # 如果使用残差连接，添加残差权重
@@ -186,6 +189,7 @@ class RepFlowLayer(torch.nn.Module):
             self.n_sym_dim,
             n_dim,
             precision=precision,
+            init=init,
             seed=child_seed(seed, 2),
         )
         if self.update_style == "res_residual":
@@ -205,6 +209,7 @@ class RepFlowLayer(torch.nn.Module):
             self.edge_info_dim,
             self.n_multi_edge_message * n_dim,
             precision=precision,
+            init=init,
             seed=child_seed(seed, 4),
         ) 
         # 如果使用残差连接，添加残差权重
@@ -229,6 +234,7 @@ class RepFlowLayer(torch.nn.Module):
             self.edge_info_dim,
             e_dim,
             precision=precision,
+            init=init,
             seed=child_seed(seed, 6),
         )
         if self.update_style == "res_residual":
@@ -269,6 +275,7 @@ class RepFlowLayer(torch.nn.Module):
                         self.n_a_compress_dim,
                         precision=precision,
                         bias=False,
+                        init=init,
                         seed=child_seed(seed, 8),
                     ) # 
                     self.a_compress_e_linear = MLPLayer(
@@ -276,6 +283,7 @@ class RepFlowLayer(torch.nn.Module):
                         self.e_a_compress_dim,
                         precision=precision,
                         bias=False,
+                        init=init,
                         seed=child_seed(seed, 9),
                     )
                 else:
@@ -289,12 +297,14 @@ class RepFlowLayer(torch.nn.Module):
                 self.angle_dim,
                 self.e_dim,
                 precision=precision,
+                init=init,
                 seed=child_seed(seed, 10),
             )
             self.edge_angle_linear2 = MLPLayer( # 第二层：边表征 → 边表征（进一步处理）
                 self.e_dim,
                 self.e_dim,
                 precision=precision,
+                init=init,
                 seed=child_seed(seed, 11),
             )
             if self.update_style == "res_residual":
@@ -313,6 +323,7 @@ class RepFlowLayer(torch.nn.Module):
                 self.angle_dim,
                 self.a_dim,
                 precision=precision,
+                init=init,
                 seed=child_seed(seed, 13),
             )
             if self.update_style == "res_residual":
@@ -1502,6 +1513,7 @@ class RepFlowLayer(torch.nn.Module):
             "update_residual": self.update_residual,
             "update_residual_init": self.update_residual_init,
             "precision": self.precision,
+            "init": self.init,
             "optim_update": self.optim_update,
             "smooth_edge_update": self.smooth_edge_update,
             "use_dynamic_sel": self.use_dynamic_sel,
