@@ -11,6 +11,7 @@ RepFlow描述符块实现模块
 RepFlow描述符块是DPA3模型的主要描述符实现，通过多层RepFlow层
 实现复杂的图神经网络消息传递机制。
 """
+from errno import ESTALE
 from typing import (
     Callable,
     Optional,
@@ -84,6 +85,65 @@ if not hasattr(torch.ops.deepmd, "border_op"):
     # Note: this hack cannot actually save a model that can be run using LAMMPS.
     torch.ops.deepmd.border_op = border_op
 
+
+import math
+
+class BesselBasisDPA3(torch.nn.Module):
+    """
+    Bessel基函数，与SevenNet完全一致
+    f : (*, 1) -> (*, bessel_basis_num)
+    """
+    def __init__(
+        self,
+        cutoff_length: float,
+        bessel_basis_num: int = 8,
+        trainable_coeff: bool = True,
+    ):
+        super().__init__()
+        self.num_basis = bessel_basis_num
+        self.prefactor = 2.0 / cutoff_length
+        self.coeffs = torch.FloatTensor([
+            n * math.pi / cutoff_length for n in range(1, bessel_basis_num + 1)
+        ])
+        if trainable_coeff:
+            self.coeffs = torch.nn.Parameter(self.coeffs)
+
+    def forward(self, r: torch.Tensor) -> torch.Tensor:
+        # r: [nb, nloc, nnei, 1]
+        #ur = r.unsqueeze(-1)  # [nb, nloc, nnei, 1, 1] --- 这行是sevenent原本的我们注释掉了。
+        #coeffs = self.coeffs.view(1, 1, 1, 1, -1)  # [1, 1, 1, 1, bessel_num]
+        #coeffs = self.coeffs.view(1, 1, 1, -1)  # [1, 1, 1, 1, bessel_num]
+        #print("self.coeffs", self.coeffs.shape) # self.coeffs torch.Size([8])
+        #print(self.coeffs)
+        # 计算 sin(n*π*r/r_cut) / r
+        #bessel_vals = self.prefactor * torch.sin(coeffs * ur) / (ur + 1e-8)
+        #print("bessel_vals.squenze(-2)", bessel_vals.squeeze(-2)) # bessel_vals torch.Size([1, 1, 1, 1, 8])
+        #return bessel_vals.squeeze(-2)  # [nb, nloc, nnei, bessel_num]
+        #print("result", self.prefactor * torch.sin(self.coeffs * r) / (r + 1e-8))
+        return self.prefactor * torch.sin(self.coeffs * r) / (r + 1e-8)
+
+class PolynomialCutoffDPA3(torch.nn.Module):
+    """
+    多项式截断函数，与SevenNet一致  
+    f : (*, 1) -> (*, 1)
+    """
+    def __init__(self, cutoff_length: float, poly_cut_p_value: int = 6):
+        super().__init__()
+        p = poly_cut_p_value
+        self.cutoff_length = cutoff_length
+        self.p = poly_cut_p_value
+        self.coeff_p0 = (p + 1.0) * (p + 2.0) / 2.0
+        self.coeff_p1 = p * (p + 2.0)  
+        self.coeff_p2 = p * (p + 1.0) / 2.0
+
+    def forward(self, r: torch.Tensor) -> torch.Tensor:
+        r_norm = r / self.cutoff_length
+        return (
+            1
+            - self.coeff_p0 * torch.pow(r_norm, self.p)
+            + self.coeff_p1 * torch.pow(r_norm, self.p + 1.0) 
+            - self.coeff_p2 * torch.pow(r_norm, self.p + 2.0)
+        )
 
 @DescriptorBlock.register("se_repflow")
 class DescrptBlockRepflows(DescriptorBlock):
@@ -232,6 +292,9 @@ class DescrptBlockRepflows(DescriptorBlock):
         optim_update: bool = True,
         seed: Optional[Union[int, list[int]]] = None,
         init: str = "default",  # new added in 2025 0923 - MLP initialization method
+        edge_use_bessel: bool = False,
+        bessel_basis_num: int = 8, 
+        bessel_trainable: bool = True,
     ) -> None:
         super().__init__()
         self.e_rcut = float(e_rcut)
@@ -294,13 +357,38 @@ class DescrptBlockRepflows(DescriptorBlock):
         self.precision = precision
         self.epsilon = 1e-4
         self.seed = seed
+        self.edge_use_bessel = edge_use_bessel
+        self.bessel_basis_num = bessel_basis_num
+        self.bessel_trainable = bessel_trainable
 
-        self.edge_embd = MLPLayer(
-            1, self.e_dim, precision=precision, init=init, seed=child_seed(seed, 0)  # new added in 2025 0923 - Pass init method
-        ) # 创建边嵌入
+        if edge_use_bessel:
+            # 启用Bessel展开时，强制使用距离r而不是1/r
+            self.edge_init_use_dist = True
+            
+            # 初始化Bessel基函数和截断函数
+            self.bessel_basis = BesselBasisDPA3(
+                cutoff_length=self.e_rcut,
+                bessel_basis_num=bessel_basis_num,
+                trainable_coeff=bessel_trainable
+            )
+            self.poly_cutoff = PolynomialCutoffDPA3(self.e_rcut)
+            
+            # 修改edge_embd的输入维度：bessel_num → e_dim
+            self.edge_embd = MLPLayer(
+                bessel_basis_num,
+                self.e_dim, 
+                precision=precision,
+                seed=child_seed(seed, 3),
+            )
+        else:
+            self.edge_embd = MLPLayer(
+                1, self.e_dim, precision=precision, init=init, seed=child_seed(seed, 0)  # new added in 2025 0923 - Pass init method
+            ) # 创建边嵌入, 从一个标量到e_dim维度的嵌入
+
+        # 创建角度嵌入---这里还没有展开angle, 不要缩进了。
         self.angle_embd = MLPLayer(
-            1, self.a_dim, precision=precision, bias=False, init=init, seed=child_seed(seed, 1)  # new added in 2025 0923 - Pass init method
-        ) # 创建角度嵌入
+                1, self.a_dim, precision=precision, bias=False, init=init, seed=child_seed(seed, 1)  # new added in 2025 0923 - Pass init method
+            ) # 创建角度嵌入, 从一个标量到a_dim维度的嵌入
         layers = []
         for ii in range(nlayers):
             layers.append(
@@ -508,7 +596,7 @@ class DescrptBlockRepflows(DescriptorBlock):
             self.e_rcut_smth,
             protection=self.env_protection,
             use_exp_switch=self.use_exp_switch,
-        )
+        ) # 这里有一个diff--> 方向向量
         
         # 处理邻居列表掩码和开关函数
         nlist_mask = nlist != -1 # nlist_mask 是邻居列表掩码，真实邻居为1，否则为0， -1是填充的邻居
@@ -568,12 +656,14 @@ class DescrptBlockRepflows(DescriptorBlock):
         # 从环境矩阵中分离边输入和旋转等变表征
         # 形状: nb x nloc x nnei x 1,  nb x nloc x nnei x 3
         edge_input, h2 = torch.split(dmatrix, [1, 3], dim=-1)
-        
-        # 如果使用直接距离初始化边特征， nb = nframe
+        # print("edge_input", edge_input.shape) # edge_input torch.Size([1, 192, 120, 1])
+            # 如果使用直接距离初始化边特征， nb = nframe
         if self.edge_init_use_dist:
             # 形状: nb x nloc x nnei x 1
             edge_input = torch.linalg.norm(diff, dim=-1, keepdim=True)
-
+        # 如果使用Bessel基函数展开，使用欧式距离
+        if self.edge_use_bessel:
+            edge_input = torch.linalg.norm(diff, dim=-1, keepdim=True)
         # 计算角度输入：归一化的方向向量
         # 形状: nf x nloc x a_nnei x 3
         normalized_diff_i = a_diff / (
@@ -611,7 +701,7 @@ class DescrptBlockRepflows(DescriptorBlock):
             
             # 扁平化所有张量以适应动态选择
             # 形状: n_edge x 1
-            edge_input = edge_input[nlist_mask]
+            edge_input = edge_input[nlist_mask] # 这里报错了。
             # 形状: n_edge x 3
             h2 = h2[nlist_mask]
             # 形状: n_edge x 1
@@ -635,10 +725,30 @@ class DescrptBlockRepflows(DescriptorBlock):
         # =============================================================================
         # 计算边嵌入
         # 形状: nb x nloc x nnei x e_dim [OR] n_edge x e_dim
-        if not self.edge_init_use_dist:
-            edge_ebd = self.act(self.edge_embd(edge_input))  # 应用激活函数
+        if self.edge_use_bessel:
+            # 使用Bessel基函数展开（类似SevenNet）
+            
+            # 强制使用欧式距离r
+            #edge_length = torch.linalg.norm(diff, dim=-1, keepdim=True)  # [nb, nloc, nnei, 1]
+            edge_length = edge_input
+            #print(edge_length.shape)  # torch.Size([1, 192, 120, 1])
+            # Bessel基函数展开 
+            bessel_features = self.bessel_basis(edge_length)    # [nb, nloc, nnei, bessel_num] torch.Size([1, 192, 120, 1, 8])
+            #print(bessel_features.shape)
+            # 多项式截断函数
+            cutoff_weight = self.poly_cutoff(edge_length)       # [nb, nloc, nnei, 1] torch.Size([1, 192, 120, 1])
+            #print(cutoff_weight.shape)
+            # 组合特征：Bessel × 截断函数
+            edge_features = bessel_features * cutoff_weight #.unsqueeze(-1)    # [nb, nloc, nnei, bessel_num]
+            #print(edge_features.shape)
+            # MLP处理：bessel_num → e_dim
+            edge_ebd = self.edge_embd(edge_features)            # [nb, nloc, nnei, e_dim]
+
         else:
-            edge_ebd = self.edge_embd(edge_input)  # 直接使用距离，不应用激活函数
+            if not self.edge_init_use_dist:
+                edge_ebd = self.act(self.edge_embd(edge_input))  # 应用激活函数
+            else:
+                edge_ebd = self.edge_embd(edge_input)  # 直接使用距离，不应用激活函数
             
         # 计算角度嵌入
         # 形状: nf x nloc x a_nnei x a_nnei x a_dim [OR] n_angle x a_dim
@@ -783,7 +893,7 @@ class DescrptBlockRepflows(DescriptorBlock):
         # 11. 返回最终结果
         # =============================================================================
         return node_ebd, edge_ebd, h2, rot_mat.view(nframes, nloc, self.dim_emb, 3), sw
-# 
+ 
     def compute_input_stats(
         self,
         merged: Union[Callable[[], list[dict]], list[dict]],

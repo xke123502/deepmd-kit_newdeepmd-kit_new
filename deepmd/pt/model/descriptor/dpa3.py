@@ -173,6 +173,10 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
             use_exp_switch=self.repflow_args.use_exp_switch,
             use_dynamic_sel=self.repflow_args.use_dynamic_sel,
             sel_reduce_factor=self.repflow_args.sel_reduce_factor,
+            # added in 2025 10 01, edge basis - Pass Bessel basis function parameters
+            edge_use_bessel=self.repflow_args.edge_use_bessel,
+            bessel_basis_num=self.repflow_args.bessel_basis_num,
+            bessel_trainable=self.repflow_args.bessel_trainable,
             use_loc_mapping=use_loc_mapping,
             exclude_types=exclude_types,
             env_protection=env_protection,

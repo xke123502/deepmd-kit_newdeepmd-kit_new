@@ -146,6 +146,17 @@ class RepFlowArgs:
         In the dynamic selection case, neighbor-scale normalization will use `e_sel / sel_reduce_factor`
         or `a_sel / sel_reduce_factor` instead of the raw `e_sel` or `a_sel` values,
         accommodating larger selection numbers.
+    edge_use_bessel : bool, optional
+        Whether to use Bessel basis function expansion for edge features,
+        similar to SevenNet. When enabled, edge features will be computed as
+        BesselBasis(r) * CutoffFunction(r) where r is the Euclidean distance.
+        This automatically forces edge_init_use_dist=True.
+    bessel_basis_num : int, optional
+        Number of Bessel basis functions when edge_use_bessel=True.
+        Higher values provide more detailed distance representations but increase computational cost.
+    bessel_trainable : bool, optional
+        Whether the Bessel basis coefficients are trainable when edge_use_bessel=True.
+        Trainable coefficients allow the model to adapt the basis functions during training.
     """
 
     def __init__(
@@ -177,6 +188,10 @@ class RepFlowArgs:
         use_exp_switch: bool = False,
         use_dynamic_sel: bool = False,
         sel_reduce_factor: float = 10.0,
+        # added in 2025 10 01, edge basis - Bessel basis function parameters
+        edge_use_bessel: bool = False,
+        bessel_basis_num: int = 8,
+        bessel_trainable: bool = True,
     ) -> None:
         self.n_dim = n_dim
         self.e_dim = e_dim
@@ -207,6 +222,10 @@ class RepFlowArgs:
         self.use_exp_switch = use_exp_switch
         self.use_dynamic_sel = use_dynamic_sel
         self.sel_reduce_factor = sel_reduce_factor
+        # added in 2025 10 01, edge basis - Initialize Bessel basis function attributes
+        self.edge_use_bessel = edge_use_bessel
+        self.bessel_basis_num = bessel_basis_num
+        self.bessel_trainable = bessel_trainable
 
     def __getitem__(self, key):
         if hasattr(self, key):
@@ -242,6 +261,10 @@ class RepFlowArgs:
             "use_exp_switch": self.use_exp_switch,
             "use_dynamic_sel": self.use_dynamic_sel,
             "sel_reduce_factor": self.sel_reduce_factor,
+            # added in 2025 10 01, edge basis - Serialize Bessel basis function parameters
+            "edge_use_bessel": self.edge_use_bessel,
+            "bessel_basis_num": self.bessel_basis_num,
+            "bessel_trainable": self.bessel_trainable,
         }
 
     @classmethod

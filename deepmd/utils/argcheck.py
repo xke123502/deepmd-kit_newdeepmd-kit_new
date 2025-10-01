@@ -1577,6 +1577,21 @@ def dpa3_repflow_args():
         "or `a_sel / sel_reduce_factor` instead of the raw `e_sel` or `a_sel` values, "
         "accommodating larger selection numbers."
     )
+    # added in 2025 10 01, edge basis - Bessel basis function parameters for DPA3
+    doc_edge_use_bessel = (
+        "Whether to use Bessel basis function expansion for edge features, "
+        "similar to SevenNet. When enabled, edge features will be computed as "
+        "BesselBasis(r) * CutoffFunction(r) where r is the Euclidean distance. "
+        "This automatically forces edge_init_use_dist=True."
+    )
+    doc_bessel_basis_num = (
+        "Number of Bessel basis functions when edge_use_bessel=True. "
+        "Higher values provide more detailed distance representations but increase computational cost."
+    )
+    doc_bessel_trainable = (
+        "Whether the Bessel basis coefficients are trainable when edge_use_bessel=True. "
+        "Trainable coefficients allow the model to adapt the basis functions during training."
+    )
 
     return [
         # repflow args
@@ -1706,6 +1721,28 @@ def dpa3_repflow_args():
             optional=True,
             default=10.0,
             doc=doc_sel_reduce_factor,
+        ),
+        # added in 2025 10 01, edge basis - Bessel basis function arguments
+        Argument(
+            "edge_use_bessel",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_edge_use_bessel,
+        ),
+        Argument(
+            "bessel_basis_num",
+            int,
+            optional=True,
+            default=8,
+            doc=doc_bessel_basis_num,
+        ),
+        Argument(
+            "bessel_trainable",
+            bool,
+            optional=True,
+            default=True,
+            doc=doc_bessel_trainable,
         ),
     ]
 
