@@ -64,6 +64,7 @@ from deepmd.utils.version import (
     check_version_compatibility,  # 版本兼容性检查
 )
 
+from deepmd.pt.model.network.utils import aggregate
 
 class RepFlowLayer(torch.nn.Module):
     """RepFlow层：DPA3模型的核心消息传递层
@@ -104,6 +105,9 @@ class RepFlowLayer(torch.nn.Module):
         precision: str = "float64",       # 数值精度
         seed: Optional[Union[int, list[int]]] = None, # 随机种子
         init: str = "default",            # new added in 2025 0923 - MLP层初始化方法
+        update_coord: bool = False,       # new added in 2025 1012 - 是否更新坐标(类似EGNN)
+        normalize_coord: bool = False,    # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
+        coords_agg: str = "mean",         # new added in 2025 1012 - 坐标聚合方式: 'mean' or 'sum'
     ) -> None:
         super().__init__()
         self.epsilon = 1e-4  # protection of 1./nnei
@@ -148,6 +152,10 @@ class RepFlowLayer(torch.nn.Module):
         self.sel_reduce_factor = sel_reduce_factor
         self.dynamic_e_sel = self.nnei / self.sel_reduce_factor
         self.dynamic_a_sel = self.a_sel / self.sel_reduce_factor
+        # new added in 2025 1012 - 坐标更新相关参数(类似EGNN)
+        self.update_coord = update_coord
+        self.normalize_coord = normalize_coord
+        self.coords_agg = coords_agg
 
         assert update_residual_init in [
             "norm",
@@ -170,6 +178,7 @@ class RepFlowLayer(torch.nn.Module):
             init=init,
             seed=child_seed(seed, 0),
         )
+        
          # 如果使用残差连接，添加残差权重
         if self.update_style == "res_residual":
             self.n_residual.append(
@@ -343,6 +352,26 @@ class RepFlowLayer(torch.nn.Module):
             self.a_compress_n_linear = None
             self.a_compress_e_linear = None
             self.angle_dim = 0
+        
+        # =============================================================================
+        # 5. 坐标更新相关层（仿照EGNN，new added in 2025 1012）
+        # =============================================================================
+        if self.update_coord:
+            # 坐标更新MLP: 边信息 → 标量权重
+            # 输入: [节点i + 节点j + 边] = edge_info_dim (n_dim*2 + e_dim)
+            # 输出: 1个标量权重，用于缩放坐标差向量
+            # 参考EGNN的coord_mlp设计
+            self.coord_update_mlp = MLPLayer(
+                self.edge_info_dim,  # 320维: 节点i(128) + 节点j(128) + 边(64)
+                1,                   # 输出标量权重
+                precision=precision,
+                bias=False,          # 同EGNN，无偏置
+                init=init,
+                seed=child_seed(seed, 16),
+            )
+        else:
+            self.coord_update_mlp = None
+            
         # 将残差权重转换为PyTorch参数列表
         # 这些权重用于"res_residual"策略，每个更新项都有独立的可学习权重
         self.n_residual = nn.ParameterList(self.n_residual)  # 节点残差权重
@@ -695,28 +724,69 @@ class RepFlowLayer(torch.nn.Module):
         nlist: torch.Tensor,
         feat: str = "node",
     ) -> torch.Tensor:
+        """
+        优化的边更新函数（标准模式）
+        
+        功能：在optim_update=True时，避免构建大的edge_info张量，直接通过分块计算实现边更新。
+        
+        原理：
+        标准计算：MLP([node_i, node_j, edge]) = W @ [node_i, node_j, edge] + b
+        优化计算：W @ [node_i, node_j, edge] = W1@node_i + W2@node_j + W3@edge + b
+        
+        通过矩阵乘法的线性性，两者数学上完全等价，但优化版本不需要拼接edge_info。
+        
+        参数：
+            node_ebd: 中心节点嵌入 [nf, nloc, n_dim]
+            node_ebd_ext: 扩展节点嵌入 [nf, nall, n_dim]
+            edge_ebd: 边嵌入 [nf, nloc, nnei, e_dim]
+            nlist: 邻居列表 [nf, nloc, nnei]
+            feat: 选择MLP类型
+                - "node": 使用node_edge_linear (输出n_dim维，用于节点更新)
+                - "edge": 使用edge_self_linear (输出e_dim维，用于边自更新)
+                - "coord": 使用coord_update_mlp (输出1维，用于坐标权重计算)
+        
+        返回：
+            更新结果 [nf, nloc, nnei, output_dim]
+            - feat="node" 时，output_dim=n_dim
+            - feat="edge" 时，output_dim=e_dim
+            - feat="coord" 时，output_dim=1
+        """
+        # 根据feat选择对应MLP的权重矩阵和偏置
         if feat == "node":
             matrix, bias = self.node_edge_linear.matrix, self.node_edge_linear.bias
         elif feat == "edge":
             matrix, bias = self.edge_self_linear.matrix, self.edge_self_linear.bias
+        elif feat == "coord":
+            matrix, bias = self.coord_update_mlp.matrix, self.coord_update_mlp.bias
         else:
             raise NotImplementedError
-        assert bias is not None
+        # 处理bias为None的情况（如coord_update_mlp的bias=False）
+        # assert bias is not None
+        if bias is None:
+            bias = 0
 
         node_dim = node_ebd.shape[-1]
         edge_dim = edge_ebd.shape[-1]
-        # node_dim, node_dim, edge_dim
+        
+        # 关键步骤：将权重矩阵分成3块
+        # matrix: [output_dim, edge_info_dim] = [output_dim, n_dim + n_dim + e_dim]
+        # 分解为：[output_dim, n_dim] + [output_dim, n_dim] + [output_dim, e_dim]
         node, node_ext, edge = torch.split(matrix, [node_dim, node_dim, edge_dim])
 
-        # nf * nloc * node/edge_dim
+        # 分别计算三部分的贡献（利用矩阵乘法的分配律）
+        # 1. 中心节点贡献: [nf, nloc, n_dim] @ [n_dim, output_dim] → [nf, nloc, output_dim]
         sub_node_update = torch.matmul(node_ebd, node)
-        # nf * nall * node/edge_dim
+        
+        # 2. 邻居节点贡献: [nf, nall, n_dim] @ [n_dim, output_dim] → [nf, nall, output_dim]
         sub_node_ext_update = torch.matmul(node_ebd_ext, node_ext)
-        # nf * nloc * nnei * node/edge_dim
+        # 通过邻居列表选择对应邻居: [nf, nall, output_dim] → [nf, nloc, nnei, output_dim]
         sub_node_ext_update = _make_nei_g1(sub_node_ext_update, nlist)
-        # nf * nloc * nnei * node/edge_dim
+        
+        # 3. 边特征贡献: [nf, nloc, nnei, e_dim] @ [e_dim, output_dim] → [nf, nloc, nnei, output_dim]
         sub_edge_update = torch.matmul(edge_ebd, edge)
 
+        # 组合三部分（等价于MLP([node_ebd, node_ebd_ext, edge_ebd])）
+        # unsqueeze(2)是为了广播：[nf, nloc, output_dim] → [nf, nloc, 1, output_dim]
         result_update = (
             bias + sub_node_update.unsqueeze(2) + sub_edge_update + sub_node_ext_update
         )
@@ -731,38 +801,73 @@ class RepFlowLayer(torch.nn.Module):
         n_ext2e_index: torch.Tensor,
         feat: str = "node",
     ) -> torch.Tensor:
+        """
+        优化的边更新函数（动态选择模式）
+        
+        功能：在use_dynamic_sel=True时，处理变长邻居列表的优化更新。
+        与optim_edge_update的区别是使用扁平化的边表示和索引映射。
+        
+        原理：与标准optim_edge_update相同，但数据结构不同：
+        - 标准模式：固定形状张量 [nf, nloc, nnei, ...]
+        - 动态模式：扁平化张量 [n_edge, ...] + 索引映射
+        
+        参数：
+            node_ebd: 中心节点嵌入 [nf, nloc, n_dim]
+            node_ebd_ext: 扩展节点嵌入 [nf, nall, n_dim]
+            flat_edge_ebd: 扁平化的边嵌入 [n_edge, e_dim]（只包含真实边）
+            n2e_index: 边到中心节点的映射 [n_edge]（每条边属于哪个中心节点）
+            n_ext2e_index: 边到邻居节点的映射 [n_edge]（每条边的邻居是谁）
+            feat: 选择MLP类型
+                - "node": 使用node_edge_linear (输出n_dim维)
+                - "edge": 使用edge_self_linear (输出e_dim维)
+                - "coord": 使用coord_update_mlp (输出1维，用于坐标权重计算)
+        
+        返回：
+            扁平化的更新结果 [n_edge, output_dim]
+        """
+        # 根据feat选择对应MLP的权重矩阵和偏置
         if feat == "node":
             matrix, bias = self.node_edge_linear.matrix, self.node_edge_linear.bias
         elif feat == "edge":
             matrix, bias = self.edge_self_linear.matrix, self.edge_self_linear.bias
+        elif feat == "coord":
+            matrix, bias = self.coord_update_mlp.matrix, self.coord_update_mlp.bias
         else:
             raise NotImplementedError
-        assert bias is not None
+        # 处理bias为None的情况（如coord_update_mlp的bias=False）
+        if bias is None:
+            bias = 0
+        
         nf, nall, node_dim = node_ebd_ext.shape
         _, nloc, _ = node_ebd.shape
         edge_dim = flat_edge_ebd.shape[-1]
-        # node_dim, node_dim, edge_dim
+        
+        # 将权重矩阵分成3块（同optim_edge_update）
         node, node_ext, edge = torch.split(matrix, [node_dim, node_dim, edge_dim])
 
-        # nf * nloc * node/edge_dim
+        # 1. 中心节点贡献
+        # [nf, nloc, n_dim] @ [n_dim, output_dim] → [nf, nloc, output_dim]
         sub_node_update = torch.matmul(node_ebd, node)
-        # n_edge * node/edge_dim
+        # 扁平化并根据n2e_index选择: [nf*nloc, output_dim] → [n_edge, output_dim]
         sub_node_update = torch.index_select(
             sub_node_update.reshape(nf * nloc, sub_node_update.shape[-1]), 0, n2e_index
         )
 
-        # nf * nall * node/edge_dim
+        # 2. 邻居节点贡献
+        # [nf, nall, n_dim] @ [n_dim, output_dim] → [nf, nall, output_dim]
         sub_node_ext_update = torch.matmul(node_ebd_ext, node_ext)
-        # n_edge * node/edge_dim
+        # 扁平化并根据n_ext2e_index选择: [nf*nall, output_dim] → [n_edge, output_dim]
         sub_node_ext_update = torch.index_select(
             sub_node_ext_update.reshape(nf * nall, sub_node_update.shape[-1]),
             0,
             n_ext2e_index,
         )
 
-        # n_edge * node/edge_dim
+        # 3. 边特征贡献
+        # [n_edge, e_dim] @ [e_dim, output_dim] → [n_edge, output_dim]
         sub_edge_update = torch.matmul(flat_edge_ebd, edge)
 
+        # 组合三部分（扁平化版本，无需unsqueeze）
         result_update = bias + sub_node_update + sub_edge_update + sub_node_ext_update
         return result_update
 
@@ -780,6 +885,7 @@ class RepFlowLayer(torch.nn.Module):
         a_sw: torch.Tensor,  # switch func, nf x nloc x a_nnei
         edge_index: torch.Tensor,  # n_edge x 2
         angle_index: torch.Tensor,  # n_angle x 3
+        diff: Optional[torch.Tensor] = None,  # new added in 2025 1012 - nf x nloc x nnei x 3, 未归一化的坐标差(xi-xj)
     ):
         """RepFlow层的前向传播函数
         
@@ -940,9 +1046,10 @@ class RepFlowLayer(torch.nn.Module):
         # =============================================================================
         # 5. 节点-边消息传递
         # =============================================================================
-        
+
         # 5.1 构建边信息（用于消息传递）
         if not self.optim_update:
+            print("self.optim_update --- False 1", self.optim_update)
             if not self.use_dynamic_sel:
                 # 标准模式：拼接节点、邻居节点、边信息
                 # 形状: nb x nloc x nnei x (n_dim * 2 + e_dim)
@@ -954,6 +1061,14 @@ class RepFlowLayer(torch.nn.Module):
                     ],
                     dim=-1,
                 )
+                print("node_ebd", node_ebd.shape)
+                print("node_ebd", node_ebd[0]) # nan nan na22n nan 
+                print("nei_node_ebd", nei_node_ebd.shape)
+                print("nei_node_ebd", nei_node_ebd[0]) # nan nan nan nan 
+                print("edge_ebd", edge_ebd.shape)
+                print("edge_ebd", edge_ebd[0]) # nan nan nan nan 
+                print("edge_info --- 1", edge_info.shape)    
+                print("edge_info", edge_info[0]) # nan nan nan nan 
             else:
                 # 动态模式：通过索引选择
                 # 形状: n_edge x (n_dim * 2 + e_dim)
@@ -972,6 +1087,8 @@ class RepFlowLayer(torch.nn.Module):
 
         # 5.2 节点-边消息传递
         # 通过边信息更新节点表征，实现消息传递
+        print("self.optim_update", self.optim_update)
+
         if not self.optim_update:
             assert edge_info is not None
             node_edge_update = self.act(
@@ -998,6 +1115,11 @@ class RepFlowLayer(torch.nn.Module):
                 )
             ) * sw.unsqueeze(-1)  # 应用开关函数
             
+        print("self.use_dynamic_sel", self.use_dynamic_sel)
+        print("edge_info", edge_info.shape)    
+        print("edge_info", edge_info[0]) # nan nan nan nan 
+        print("node_edge_update", node_edge_update.shape)
+        print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
         # 5.3 聚合边消息到节点
         # 将来自所有邻居的消息聚合到中心节点
         node_edge_update = (
@@ -1013,6 +1135,8 @@ class RepFlowLayer(torch.nn.Module):
                 / self.dynamic_e_sel
             )
         )
+        print("node_edge_update", node_edge_update.shape)
+        print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
 
         # 5.4 处理多头边消息（如果启用）
         if self.n_multi_edge_message > 1:
@@ -1030,6 +1154,78 @@ class RepFlowLayer(torch.nn.Module):
         # 5.5 更新节点表征（使用残差连接）
         n_updated = self.list_update(n_update_list, "node")
 
+        # =============================================================================
+        # 5.6 坐标更新（完全复制节点-边消息传递的模式，new added in 2025 1012）
+        # =============================================================================
+        coord_update = None
+        if self.update_coord and diff is not None:
+            assert self.coord_update_mlp is not None, "coord_update_mlp should be initialized when update_coord=True"
+            print("self.optim_update", self.optim_update)
+            # ========== 第1步：计算坐标标量权重（完全复制节点-边消息传递的模式）==========
+            # 【与节点-边消息传递唯一的不同】：这里计算coord权重，那里计算node_edge_update
+            if not self.optim_update:
+                # 非优化模式：需要edge_info（但通常optim_update=True，这个分支不走）
+                assert edge_info is not None
+                coord_weights = self.coord_update_mlp(edge_info)  # [nf, nloc, nnei, 1]
+                print("coord_weights", coord_weights.shape)
+                print("coord_weights", coord_weights[0]) # nan nan nan nan 
+            else:
+                # 优化模式：直接计算，避免构建大型中间张量（和节点-边消息传递完全一样）
+                coord_weights = (
+                    self.optim_edge_update(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        nlist,
+                        "coord",  # 【不同点1】：使用"coord"分支而不是"node"
+                    )
+                    if not self.use_dynamic_sel
+                    else self.optim_edge_update_dynamic(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        n2e_index,
+                        n_ext2e_index,
+                        "coord",  # 【不同点1】：使用"coord"分支而不是"node"
+                    )
+                )  # 输出形状: [nf, nloc, nnei, 1] 或 [n_edge, 1]
+            
+            # ========== 第2步：应用开关函数（和节点-边消息传递完全一样）==========
+            # 注意：节点-边消息传递在这里乘以sw.unsqueeze(-1)
+            coord_weights = coord_weights * sw.unsqueeze(-1) * 0.001
+            
+            # ========== 第3步：计算坐标变换向量（这是坐标更新特有的）==========
+            # 【不同点2】：节点-边消息传递在这里已经是标量，这里需要乘以方向向量
+            # 处理坐标差向量（动态模式下需要扁平化）
+            if not self.use_dynamic_sel:
+                coord_diff_use = diff  # [nf, nloc, nnei, 3]
+            else:
+                coord_diff_use = diff[nlist_mask]  # [n_edge, 3]
+            
+            # 可选归一化（方向向量）
+            if self.normalize_coord:
+                length = torch.linalg.norm(coord_diff_use, dim=-1, keepdim=True)
+                coord_diff_use = coord_diff_use / (length + self.epsilon)
+                #coord_diff_use = h2
+            # 向量 × 标量 = 向量（保持等变性）
+            coord_trans = coord_diff_use * coord_weights  # [nf, nloc, nnei, 3] 或 [n_edge, 3]
+            print("isnan coord_trans", torch.isnan(coord_trans).sum()) # nan nan nan nan 
+            # ========== 第4步：聚合到每个原子（和节点-边消息传递完全一样）==========
+            coord_update = (
+                (torch.sum(coord_trans, dim=-2) / self.nnei)  # 标准模式：平均聚合
+                if not self.use_dynamic_sel
+                else (  # 动态模式：使用聚合函数
+                    aggregate(
+                        coord_trans,
+                        n2e_index,
+                        average=False,
+                        num_owner=nb * nloc,
+                    ).reshape(nb, nloc, 3)  # 【不同点3】：输出形状是3而不是n_dim
+                    / self.dynamic_e_sel
+                )
+            )
+            print("coord_update", coord_update.shape)
+            print("coord_update", torch.isnan(coord_update).sum()) # nan nan nan nan 
         # =============================================================================
         # 6. 边表征更新 G2
         # =============================================================================
@@ -1291,7 +1487,9 @@ class RepFlowLayer(torch.nn.Module):
         a_updated = self.list_update(a_update_list, "angle")
         
         # 返回更新后的所有表征
-        return n_updated, e_updated, a_updated
+        # new added in 2025 1012 - 添加coord_update返回值
+        return n_updated, e_updated, a_updated, coord_update
+        # return n_updated, e_updated, a_updated
 
     @torch.jit.export
     def list_update_res_avg(
@@ -1518,6 +1716,9 @@ class RepFlowLayer(torch.nn.Module):
             "smooth_edge_update": self.smooth_edge_update,
             "use_dynamic_sel": self.use_dynamic_sel,
             "sel_reduce_factor": self.sel_reduce_factor,
+            "update_coord": self.update_coord,  # new added in 2025 1012
+            "normalize_coord": self.normalize_coord,  # new added in 2025 1012
+            "coords_agg": self.coords_agg,  # new added in 2025 1012
             "node_self_mlp": self.node_self_mlp.serialize(),
             "node_sym_linear": self.node_sym_linear.serialize(),
             "node_edge_linear": self.node_edge_linear.serialize(),
@@ -1538,6 +1739,13 @@ class RepFlowLayer(torch.nn.Module):
                         "a_compress_e_linear": self.a_compress_e_linear.serialize(),
                     }
                 )
+        # new added in 2025 1012 - 序列化坐标更新MLP
+        if self.update_coord:
+            data.update(
+                {
+                    "coord_update_mlp": self.coord_update_mlp.serialize(),
+                }
+            )
         if self.update_style == "res_residual":
             data.update(
                 {
@@ -1574,6 +1782,7 @@ class RepFlowLayer(torch.nn.Module):
         angle_self_linear = data.pop("angle_self_linear", None)
         a_compress_n_linear = data.pop("a_compress_n_linear", None)
         a_compress_e_linear = data.pop("a_compress_e_linear", None)
+        coord_update_mlp = data.pop("coord_update_mlp", None)  # new added in 2025 1012
         update_style = data["update_style"]
         variables = data.pop("@variables", {})
         n_residual = variables.get("n_residual", data.pop("n_residual", []))
@@ -1598,6 +1807,11 @@ class RepFlowLayer(torch.nn.Module):
                 assert isinstance(a_compress_e_linear, dict)
                 obj.a_compress_n_linear = MLPLayer.deserialize(a_compress_n_linear)
                 obj.a_compress_e_linear = MLPLayer.deserialize(a_compress_e_linear)
+
+        # new added in 2025 1012 - 反序列化坐标更新MLP
+        if coord_update_mlp is not None:
+            assert isinstance(coord_update_mlp, dict)
+            obj.coord_update_mlp = MLPLayer.deserialize(coord_update_mlp)
 
         if update_style == "res_residual":
             for ii, t in enumerate(obj.n_residual):

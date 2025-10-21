@@ -1592,6 +1592,23 @@ def dpa3_repflow_args():
         "Whether the Bessel basis coefficients are trainable when edge_use_bessel=True. "
         "Trainable coefficients allow the model to adapt the basis functions during training."
     )
+    # new added in 2025 1012 - 坐标更新相关参数(类似EGNN)
+    doc_update_coord = (
+        "Whether to update atomic coordinates in each RepFlow layer (similar to EGNN). "
+        "When enabled, coordinates are dynamically adjusted during message passing, "
+        "allowing the model to learn geometric structure refinement. Default is False."
+    )
+    doc_normalize_coord = (
+        "Whether to normalize the coordinate difference vector when computing coordinate updates (similar to EGNN). "
+        "When True, uses unit direction vectors (diff / ||diff||). "
+        "When False (default), uses raw coordinate differences (xi - xj). "
+        "Only effective when update_coord is True."
+    )
+    doc_coords_agg = (
+        "Aggregation method for coordinate updates: 'mean' (default) or 'sum'. "
+        "'mean' averages over neighbors (more stable), 'sum' directly sums neighbor contributions. "
+        "Only effective when update_coord is True."
+    )
 
     return [
         # repflow args
@@ -1743,6 +1760,28 @@ def dpa3_repflow_args():
             optional=True,
             default=True,
             doc=doc_bessel_trainable,
+        ),
+        # new added in 2025 1012 - 坐标更新相关参数
+        Argument(
+            "update_coord",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_update_coord,
+        ),
+        Argument(
+            "normalize_coord",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_normalize_coord,
+        ),
+        Argument(
+            "coords_agg",
+            str,
+            optional=True,
+            default="mean",
+            doc=doc_coords_agg,
         ),
     ]
 

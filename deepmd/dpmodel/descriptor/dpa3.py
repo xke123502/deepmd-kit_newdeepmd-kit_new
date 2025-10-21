@@ -192,6 +192,10 @@ class RepFlowArgs:
         edge_use_bessel: bool = False,
         bessel_basis_num: int = 8,
         bessel_trainable: bool = True,
+        # new added in 2025 1012 - 坐标更新相关参数(类似EGNN)
+        update_coord: bool = False,
+        normalize_coord: bool = False,
+        coords_agg: str = "mean",
     ) -> None:
         self.n_dim = n_dim
         self.e_dim = e_dim
@@ -226,6 +230,10 @@ class RepFlowArgs:
         self.edge_use_bessel = edge_use_bessel
         self.bessel_basis_num = bessel_basis_num
         self.bessel_trainable = bessel_trainable
+        # new added in 2025 1012 - 保存坐标更新相关参数
+        self.update_coord = update_coord
+        self.normalize_coord = normalize_coord
+        self.coords_agg = coords_agg
 
     def __getitem__(self, key):
         if hasattr(self, key):
@@ -265,6 +273,10 @@ class RepFlowArgs:
             "edge_use_bessel": self.edge_use_bessel,
             "bessel_basis_num": self.bessel_basis_num,
             "bessel_trainable": self.bessel_trainable,
+            # new added in 2025 1012 - 序列化坐标更新参数
+            "update_coord": self.update_coord,
+            "normalize_coord": self.normalize_coord,
+            "coords_agg": self.coords_agg,
         }
 
     @classmethod
@@ -379,6 +391,9 @@ class DescrptDPA3(NativeOP, BaseDescriptor):
             exclude_types=exclude_types,
             env_protection=env_protection,
             precision=precision,
+            update_coord=self.repflow_args.update_coord,  # new added in 2025 1012
+            normalize_coord=self.repflow_args.normalize_coord,  # new added in 2025 1012
+            coords_agg=self.repflow_args.coords_agg,  # new added in 2025 1012
             seed=child_seed(seed, 1),
         )
 

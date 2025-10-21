@@ -182,6 +182,9 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
             env_protection=env_protection,
             precision=precision,
             init=mlp_init_method,  # new added in 2025 0923 - Pass RepFlow MLP initialization method
+            update_coord=self.repflow_args.update_coord,  # new added in 2025 1012
+            normalize_coord=self.repflow_args.normalize_coord,  # new added in 2025 1012
+            coords_agg=self.repflow_args.coords_agg,  # new added in 2025 1012
             seed=child_seed(seed, 1),
         )
 

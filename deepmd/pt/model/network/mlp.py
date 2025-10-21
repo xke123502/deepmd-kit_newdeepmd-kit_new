@@ -114,7 +114,7 @@ class MLPLayer(nn.Module):
         activation_function: Optional[str] = None, # 激活函数名称
         resnet: bool = False,      # 是否使用残差连接
         bavg: float = 0.0,         # 偏置初始化均值
-        stddev: float = 1.0,       # 权重初始化标准差
+        stddev: float = 1.0,       # 权重初始化标准差 stddev=math.sqrt(2)
         precision: str = DEFAULT_PRECISION, # 数值精度
         init: str = "default", #"kaiming_uniform_normal_dt",     # 初始化方法
         seed: Optional[Union[int, list[int]]] = None, # 随机种子
