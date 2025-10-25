@@ -757,13 +757,14 @@ class RepFlowLayer(torch.nn.Module):
         elif feat == "edge":
             matrix, bias = self.edge_self_linear.matrix, self.edge_self_linear.bias
         elif feat == "coord":
+            assert self.coord_update_mlp is not None, "coord_update_mlp should not be None when feat='coord'"
             matrix, bias = self.coord_update_mlp.matrix, self.coord_update_mlp.bias
         else:
             raise NotImplementedError
         # 处理bias为None的情况（如coord_update_mlp的bias=False）
-        # assert bias is not None
+        # 注意：TorchScript要求类型一致，所以用标量Tensor而不是int
         if bias is None:
-            bias = 0
+            bias = torch.zeros(1, dtype=node_ebd.dtype, device=node_ebd.device)
 
         node_dim = node_ebd.shape[-1]
         edge_dim = edge_ebd.shape[-1]
@@ -831,12 +832,14 @@ class RepFlowLayer(torch.nn.Module):
         elif feat == "edge":
             matrix, bias = self.edge_self_linear.matrix, self.edge_self_linear.bias
         elif feat == "coord":
+            assert self.coord_update_mlp is not None, "coord_update_mlp should not be None when feat='coord'"
             matrix, bias = self.coord_update_mlp.matrix, self.coord_update_mlp.bias
         else:
             raise NotImplementedError
         # 处理bias为None的情况（如coord_update_mlp的bias=False）
+        # 注意：TorchScript要求类型一致，所以用标量Tensor而不是int
         if bias is None:
-            bias = 0
+            bias = torch.zeros(1, dtype=node_ebd.dtype, device=node_ebd.device)
         
         nf, nall, node_dim = node_ebd_ext.shape
         _, nloc, _ = node_ebd.shape
@@ -1049,7 +1052,7 @@ class RepFlowLayer(torch.nn.Module):
 
         # 5.1 构建边信息（用于消息传递）
         if not self.optim_update:
-            print("self.optim_update --- False 1", self.optim_update)
+           # print("self.optim_update --- False 1", self.optim_update)
             if not self.use_dynamic_sel:
                 # 标准模式：拼接节点、邻居节点、边信息
                 # 形状: nb x nloc x nnei x (n_dim * 2 + e_dim)
@@ -1061,14 +1064,14 @@ class RepFlowLayer(torch.nn.Module):
                     ],
                     dim=-1,
                 )
-                print("node_ebd", node_ebd.shape)
-                print("node_ebd", node_ebd[0]) # nan nan na22n nan 
-                print("nei_node_ebd", nei_node_ebd.shape)
-                print("nei_node_ebd", nei_node_ebd[0]) # nan nan nan nan 
-                print("edge_ebd", edge_ebd.shape)
-                print("edge_ebd", edge_ebd[0]) # nan nan nan nan 
-                print("edge_info --- 1", edge_info.shape)    
-                print("edge_info", edge_info[0]) # nan nan nan nan 
+                #print("node_ebd", node_ebd.shape)
+                #print("node_ebd", node_ebd[0]) # nan nan na22n nan 
+                #print("nei_node_ebd", nei_node_ebd.shape)
+                #print("nei_node_ebd", nei_node_ebd[0]) # nan nan nan nan 
+                #print("edge_ebd", edge_ebd.shape)
+                #print("edge_ebd", edge_ebd[0]) # nan nan nan nan 
+                #print("edge_info --- 1", edge_info.shape)    
+                #print("edge_info", edge_info[0]) # nan nan nan nan 
             else:
                 # 动态模式：通过索引选择
                 # 形状: n_edge x (n_dim * 2 + e_dim)
@@ -1087,7 +1090,7 @@ class RepFlowLayer(torch.nn.Module):
 
         # 5.2 节点-边消息传递
         # 通过边信息更新节点表征，实现消息传递
-        print("self.optim_update", self.optim_update)
+        #print("self.optim_update", self.optim_update)
 
         if not self.optim_update:
             assert edge_info is not None
@@ -1115,11 +1118,11 @@ class RepFlowLayer(torch.nn.Module):
                 )
             ) * sw.unsqueeze(-1)  # 应用开关函数
             
-        print("self.use_dynamic_sel", self.use_dynamic_sel)
-        print("edge_info", edge_info.shape)    
-        print("edge_info", edge_info[0]) # nan nan nan nan 
-        print("node_edge_update", node_edge_update.shape)
-        print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
+        #print("self.use_dynamic_sel", self.use_dynamic_sel)
+        #print("edge_info", edge_info.shape)    
+        #print("edge_info", edge_info[0]) # nan nan nan nan 
+        #print("node_edge_update", node_edge_update.shape)
+        #print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
         # 5.3 聚合边消息到节点
         # 将来自所有邻居的消息聚合到中心节点
         node_edge_update = (
@@ -1135,8 +1138,8 @@ class RepFlowLayer(torch.nn.Module):
                 / self.dynamic_e_sel
             )
         )
-        print("node_edge_update", node_edge_update.shape)
-        print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
+        #print("node_edge_update", node_edge_update.shape)
+        #print("node_edge_update", node_edge_update[0]) # nan nan nan nan 
 
         # 5.4 处理多头边消息（如果启用）
         if self.n_multi_edge_message > 1:
@@ -1157,18 +1160,19 @@ class RepFlowLayer(torch.nn.Module):
         # =============================================================================
         # 5.6 坐标更新（完全复制节点-边消息传递的模式，new added in 2025 1012）
         # =============================================================================
-        coord_update = None
+        # 显式类型注解，告诉TorchScript这是Optional[Tensor]
+        coord_update: Optional[torch.Tensor] = None
         if self.update_coord and diff is not None:
             assert self.coord_update_mlp is not None, "coord_update_mlp should be initialized when update_coord=True"
-            print("self.optim_update", self.optim_update)
+            #print("self.optim_update", self.optim_update)
             # ========== 第1步：计算坐标标量权重（完全复制节点-边消息传递的模式）==========
-            # 【与节点-边消息传递唯一的不同】：这里计算coord权重，那里计算node_edge_update
+            # 与节点-边消息传递唯一的不同：这里计算coord权重，那里计算node_edge_update
             if not self.optim_update:
                 # 非优化模式：需要edge_info（但通常optim_update=True，这个分支不走）
                 assert edge_info is not None
                 coord_weights = self.coord_update_mlp(edge_info)  # [nf, nloc, nnei, 1]
-                print("coord_weights", coord_weights.shape)
-                print("coord_weights", coord_weights[0]) # nan nan nan nan 
+                #print("coord_weights", coord_weights.shape)
+                #print("coord_weights", coord_weights[0]) # nan nan nan nan 
             else:
                 # 优化模式：直接计算，避免构建大型中间张量（和节点-边消息传递完全一样）
                 coord_weights = (
@@ -1177,7 +1181,7 @@ class RepFlowLayer(torch.nn.Module):
                         node_ebd_ext,
                         edge_ebd,
                         nlist,
-                        "coord",  # 【不同点1】：使用"coord"分支而不是"node"
+                        "coord",  # 
                     )
                     if not self.use_dynamic_sel
                     else self.optim_edge_update_dynamic(
@@ -1186,16 +1190,17 @@ class RepFlowLayer(torch.nn.Module):
                         edge_ebd,
                         n2e_index,
                         n_ext2e_index,
-                        "coord",  # 【不同点1】：使用"coord"分支而不是"node"
+                        "coord",  # 
                     )
                 )  # 输出形状: [nf, nloc, nnei, 1] 或 [n_edge, 1]
             
             # ========== 第2步：应用开关函数（和节点-边消息传递完全一样）==========
             # 注意：节点-边消息传递在这里乘以sw.unsqueeze(-1)
-            coord_weights = coord_weights * sw.unsqueeze(-1) * 0.001
-            
+            #coord_weights = coord_weights * sw.unsqueeze(-1) #* 0.001
+            # 限制在 [-1, 1] 范围，物理意义明确
+            coord_weights = torch.tanh(coord_weights) * sw.unsqueeze(-1)
             # ========== 第3步：计算坐标变换向量（这是坐标更新特有的）==========
-            # 【不同点2】：节点-边消息传递在这里已经是标量，这里需要乘以方向向量
+            # 不同点2：节点-边消息传递在这里已经是标量，这里需要乘以方向向量
             # 处理坐标差向量（动态模式下需要扁平化）
             if not self.use_dynamic_sel:
                 coord_diff_use = diff  # [nf, nloc, nnei, 3]
@@ -1209,7 +1214,7 @@ class RepFlowLayer(torch.nn.Module):
                 #coord_diff_use = h2
             # 向量 × 标量 = 向量（保持等变性）
             coord_trans = coord_diff_use * coord_weights  # [nf, nloc, nnei, 3] 或 [n_edge, 3]
-            print("isnan coord_trans", torch.isnan(coord_trans).sum()) # nan nan nan nan 
+            #print("isnan coord_trans", torch.isnan(coord_trans).sum()) # nan nan nan nan 
             # ========== 第4步：聚合到每个原子（和节点-边消息传递完全一样）==========
             coord_update = (
                 (torch.sum(coord_trans, dim=-2) / self.nnei)  # 标准模式：平均聚合
@@ -1224,8 +1229,8 @@ class RepFlowLayer(torch.nn.Module):
                     / self.dynamic_e_sel
                 )
             )
-            print("coord_update", coord_update.shape)
-            print("coord_update", torch.isnan(coord_update).sum()) # nan nan nan nan 
+            #print("coord_update", coord_update.shape)
+            #print("coord_update", torch.isnan(coord_update).sum()) # nan nan nan nan 
         # =============================================================================
         # 6. 边表征更新 G2
         # =============================================================================

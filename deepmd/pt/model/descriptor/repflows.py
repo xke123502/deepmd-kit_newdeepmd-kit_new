@@ -590,25 +590,25 @@ class DescrptBlockRepflows(DescriptorBlock):
         if not parallel_mode:
             assert mapping is not None
         nframes, nloc, nnei = nlist.shape
-        print("extended_coord", extended_coord.shape) # extended_coord torch.Size([1, 5184, 3])
-        print("extended_coord", extended_coord[0]) # extended_coord torch.Size([1, 5184, 3])
+        #print("extended_coord", extended_coord.shape) # extended_coord torch.Size([1, 5184, 3])
+        #print("extended_coord", extended_coord[0]) # extended_coord torch.Size([1, 5184, 3])
         nall = extended_coord.view(nframes, -1).shape[1] // 3
         atype = extended_atype[:, :nloc]
-        print("nall", nall) # nall 5184
-        print("extend_ coord", extended_coord.shape) # extend_ coord torch.Size([1, 5184, 3])
-        print("extend_ coord", extended_coord[0]) # extend_ coord torch.Size([1, 5184, 3])
+        #print("nall", nall) # nall 5184
+        #print("extend_ coord", extended_coord.shape) # extend_ coord torch.Size([1, 5184, 3])
+        #print("extend_ coord", extended_coord[0]) # extend_ coord torch.Size([1, 5184, 3])
         # =============================================================================
         # 2. 处理排除的原子对
         # =============================================================================
         # 应用排除掩码：将排除的原子对设为-1
         exclude_mask = self.emask(nlist, extended_atype)
         nlist = torch.where(exclude_mask != 0, nlist, -1)
-        print("nlist", nlist.shape) # nlist torch.Size([1, 192, 120])
-        print("nlist", nlist[0]) # nlist torch.Size([1, 192, 120])
-        print("atype", atype.shape) # atype torch.Size([1, 192])
-        print("atype", atype[0]) # atype torch.Size([1, 192])
-        print("exclude_mask", exclude_mask.shape) # exclude_mask torch.Size([1, 192, 120])
-        print("exclude_mask", exclude_mask[0]) # exclude_mask torch.Size([1, 192, 120])
+        #print("nlist", nlist.shape) # nlist torch.Size([1, 192, 120])
+        #print("nlist", nlist[0]) # nlist torch.Size([1, 192, 120])
+        #print("atype", atype.shape) # atype torch.Size([1, 192])
+        #print("atype", atype[0]) # atype torch.Size([1, 192])
+        #print("exclude_mask", exclude_mask.shape) # exclude_mask torch.Size([1, 192, 120])
+        #print("exclude_mask", exclude_mask[0]) # exclude_mask torch.Size([1, 192, 120])
 
         # =============================================================================
         # 3. 构建环境矩阵
@@ -626,9 +626,9 @@ class DescrptBlockRepflows(DescriptorBlock):
             protection=self.env_protection,
             use_exp_switch=self.use_exp_switch,
         ) # 这里有一个diff--> 方向向量
-        print("extended_coord", extended_coord.shape) # extended_coord torch.Size([1, 5184, 3])
-        print("diff_pre", diff.shape)
-        print("diff", diff)
+        #print("extended_coord", extended_coord.shape) # extended_coord torch.Size([1, 5184, 3])
+        #print("diff_pre", diff.shape)
+        #print("diff", diff)
         # 处理邻居列表掩码和开关函数
         nlist_mask = nlist != -1 # nlist_mask 是邻居列表掩码，真实邻居为1，否则为0， -1是填充的邻居
         sw = torch.squeeze(sw, -1)
@@ -786,11 +786,11 @@ class DescrptBlockRepflows(DescriptorBlock):
                 edge_ebd = self.edge_embd(edge_input)  # 直接使用距离，不应用激活函数
         
         # 【调试】检查edge_ebd是否有NaN
-        print("=== edge_ebd 初始化后检查 ===")
-        print("edge_input has nan:", torch.isnan(edge_input).any().item())
-        print("edge_input sample:", edge_input.shape)
-        print("edge_ebd has nan:", torch.isnan(edge_ebd).any().item())
-        print("edge_ebd sample:", edge_ebd.shape)
+        #print("=== edge_ebd 初始化后检查 ===")
+        #print("edge_input has nan:", torch.isnan(edge_input).any().item())
+        #print("edge_input sample:", edge_input.shape)
+        #print("edge_ebd has nan:", torch.isnan(edge_ebd).any().item())
+        #print("edge_ebd sample:", edge_ebd.shape)
             
         # 计算角度嵌入
         # 形状: nf x nloc x a_nnei x a_nnei x a_dim [OR] n_angle x a_dim
@@ -800,12 +800,17 @@ class DescrptBlockRepflows(DescriptorBlock):
         # 9. 通过多层RepFlow层进行消息传递
         # =============================================================================
         # 准备映射张量（非并行模式）
+        # 初始化mapping_orig，确保所有分支都有定义（TorchScript要求）
+        mapping_orig: torch.Tensor = torch.zeros([1, 1], dtype=torch.int64, device=nlist.device)
         if not parallel_mode:
             assert mapping is not None
             # Modified in 2025-10-14 - 准备mapping_coord用于坐标扩展
             mapping_orig = mapping.view(nframes, nall)
             mapping = mapping_orig.unsqueeze(-1).expand(-1, -1, self.n_dim)
             #mapping_coord = mapping_orig.unsqueeze(-1).expand(-1, -1, 3)
+        # extended_coord_new = extended_coord.detach().clone()
+        
+        extended_coord_new = extended_coord.clone()
 
         # 遍历所有RepFlow层进行消息传递 --- 循环
         for idx, ll in enumerate(self.layers):
@@ -813,8 +818,8 @@ class DescrptBlockRepflows(DescriptorBlock):
             # 准备扩展节点嵌入
             # node_ebd:     nb x nloc x n_dim
             # node_ebd_ext: nb x nall x n_dim [OR] nb x nloc x n_dim when not parallel_mode
-            print("parallel_mode", parallel_mode) # parallel_mode False
-            print("use_loc_mapping", self.use_loc_mapping) # use_loc_mapping True
+            #print("parallel_mode", parallel_mode) # parallel_mode False
+            #print("use_loc_mapping", self.use_loc_mapping) # use_loc_mapping True
             if not parallel_mode:
                 assert mapping is not None
                 node_ebd_ext = (
@@ -822,10 +827,10 @@ class DescrptBlockRepflows(DescriptorBlock):
                     if not self.use_loc_mapping
                     else node_ebd
                 ) # node_ebd → 派生 node_ebd_ext → RepFlowLayer → 得到新 node_ebd → 再派生下一层的 node_ebd_ext → …
-                print("node_ebd_ext", node_ebd_ext.shape)       # node_ebd_ext torch.Size([1, 192, 128]) 
+                #print("node_ebd_ext", node_ebd_ext.shape)       # node_ebd_ext torch.Size([1, 192, 128]) 
             else:
-                print("parallel_mode --- True")
-                print("node_ebd", node_ebd.shape)       # node_ebd torch.Size([1, 192, 128]) 
+                #print("parallel_mode --- True")
+                #print("node_ebd", node_ebd.shape)       # node_ebd torch.Size([1, 192, 128]) 
                 # 并行模式：处理通信和自旋
                 assert comm_dict is not None
                 has_spin = "has_spin" in comm_dict
@@ -891,7 +896,7 @@ class DescrptBlockRepflows(DescriptorBlock):
                     node_ebd_ext = concat_switch_virtual(
                         node_ebd_real_ext, node_ebd_virtual_ext, real_nloc
                     )
-            print("node_ebd_ext", node_ebd_ext.shape)       # node_ebd_ext torch.Size([1, 192, 128]) 
+            # print("node_ebd_ext", node_ebd_ext.shape)       # node_ebd_ext torch.Size([1, 192, 128]) 
             # 调用RepFlow层的前向传播函数 --- 这里输出了最终的node_ebd, edge_ebd, angle_ebd --- from repflow_layer.py
             # node_ebd, edge_ebd, angle_ebd = ll.forward(
             # new added in 2025 1012 - 添加diff参数和coord_update返回值
@@ -910,21 +915,22 @@ class DescrptBlockRepflows(DescriptorBlock):
                 angle_index=angle_index, # 角度索引
                 diff=diff,  # new added in 2025 1012 - 传入未归一化的坐标差, 更新坐标需要diff
             ) # 返回：node_ebd, edge_ebd, angle_ebd, coord_update
-            if coord_update is not None:
-                print("coord_update", coord_update.shape)      
+            #if coord_update is not None:
+                # print("coord_update", coord_update.shape)      
                 # 计算每个原子的移动距离
-                distances = torch.linalg.norm(coord_update, dim=-1)  # [nf, nloc]
-                mean_distance = distances.mean()
-                print(f"  mean dist: {mean_distance:.6f} Å")
-                max_update = coord_update.abs().max()
-                print(f"  max: {max_update:.6f} Å")
-                print("coord_diff", diff.shape)
-                print("diff", diff)
+                #distances = torch.linalg.norm(coord_update, dim=-1)  # [nf, nloc]
+                #mean_distance = distances.mean()
+                # print(f"  mean dist: {mean_distance:.6f} Å")
+                #max_update = coord_update.abs().max()
+                # print(f"  max: {max_update:.6f} Å")
+                # print("coord_diff", diff.shape)
+                # print("diff", diff)
 
             # =============================================================================
             # Modified in 2025-10-14 - 坐标更新和环境矩阵重算
             # =============================================================================
             # 在 repflows.py 中，坐标更新前添加
+            '''
             def diagnose_prod_env_mat_gradient(coord, nlist, atype, mean, stddev, rcut, rcut_smth):
                 """诊断prod_env_mat的梯度问题"""
                 print("\n=== Diagnosing prod_env_mat gradients ===")
@@ -973,7 +979,7 @@ class DescrptBlockRepflows(DescriptorBlock):
                                 
                         except RuntimeError as e:
                             print(f"  ❌ Error computing gradient for {name}: {e}")
-
+            '''
             if self.update_coord and coord_update is not None:
                 # =====================================================================
                 # 坐标更新逻辑（完全仿照node_ebd/node_ebd_ext的处理模式）
@@ -995,21 +1001,21 @@ class DescrptBlockRepflows(DescriptorBlock):
                     # 将局部位移按映射广播到extended区
                     delta_ext = torch.gather(coord_update, 1, mapping_coord_ext)  # [nf, nall, 3]
                     # 增量更新extended坐标（保持ghost的PBC平移不变）
-                    extended_coord = extended_coord + delta_ext
+                    extended_coord_new = extended_coord_new + delta_ext #* 0.01
                 else:
                     # 并行模式暂不支持坐标更新
                     raise NotImplementedError("update_coord in parallel_mode is not supported yet")
                 # =====================================================================
-                diagnose_prod_env_mat_gradient(
-                    extended_coord + delta_ext,  # 更新后的坐标
-                    nlist, atype,
-                    self.mean, self.stddev,
-                    self.e_rcut, self.e_rcut_smth
-                )
+                # diagnose_prod_env_mat_gradient(
+                #    extended_coord_new,  # 更新后的坐标
+                #    nlist, atype,
+                #    self.mean, self.stddev,
+                #    self.e_rcut, self.e_rcut_smth
+                # )
                 # 2. 重新计算边环境矩阵（基于更新后的extended_coord）
                 # =====================================================================
                 dmatrix, diff, sw = prod_env_mat(
-                    extended_coord,  # 使用更新后的坐标
+                    extended_coord_new.detach(),  # 使用更新后的坐标
                     nlist,           # 拓扑不变，复用原始nlist
                     atype,
                     self.mean,
@@ -1019,13 +1025,20 @@ class DescrptBlockRepflows(DescriptorBlock):
                     protection=self.env_protection,
                     use_exp_switch=self.use_exp_switch,
                 )
-                print("diff", diff.shape)
-                print("diff", diff)
-                r = torch.linalg.norm(diff, dim=-1)
-                print(f"[layer {idx}] env_prot={self.env_protection:.1e} r_min={(r[r>0]).min().item():.3e}")
+                #print("diff", diff.shape)
+                #print("diff", diff)
+                #r = torch.linalg.norm(diff, dim=-1)
+                #print(f"[layer {idx}] env_prot={self.env_protection:.1e} r_min={(r[r>0]).min().item():.3e}")
                 # 更新边几何量（复用原始nlist_mask，拓扑不变）
                 sw = torch.squeeze(sw, -1).masked_fill(~nlist_mask, 0.0)
                 _, h2 = torch.split(dmatrix, [1, 3], dim=-1)  # h2: [nf, nloc, nnei, 3]
+                #epsilon = 1e-6  # 比默认的1e-6大得多
+                #diff_norm = torch.linalg.norm(diff.detach().clone(), dim=-1, keepdim=True)
+                #diff_norm = torch.linalg.norm(diff, dim=-1, keepdim=True)
+
+                #h2 = diff / (diff_norm + epsilon)  # 避免除以很小的数
+                #h2 = diff
+                #h2 = h2_new.detach().clone()
                 if self.use_dynamic_sel:
                     # 扁平化以匹配动态选择的数据流
                     h2 = h2[nlist_mask]   # [n_edge, 3]
@@ -1065,11 +1078,11 @@ class DescrptBlockRepflows(DescriptorBlock):
         # =============================================================================
         # 11. 返回最终结果
         # =============================================================================
-        print("isnan node_ebd", torch.isnan(node_ebd).sum()) # nan nan nan nan 
-        print("isnan edge_ebd", torch.isnan(edge_ebd).sum()) # nan nan nan nan 
-        print("isnan h2", torch.isnan(h2).sum()) # nan nan nan nan 
-        print("isnan rot_mat", torch.isnan(rot_mat).sum()) # nan nan nan nan 
-        print("isnan sw", torch.isnan(sw).sum()) # nan nan nan nan 
+        #print("isnan node_ebd", torch.isnan(node_ebd).sum()) # nan nan nan nan 
+        #print("isnan edge_ebd", torch.isnan(edge_ebd).sum()) # nan nan nan nan 
+        #print("isnan h2", torch.isnan(h2).sum()) # nan nan nan nan 
+        #print("isnan rot_mat", torch.isnan(rot_mat).sum()) # nan nan nan nan 
+        #print("isnan sw", torch.isnan(sw).sum()) # nan nan nan nan 
         return node_ebd, edge_ebd, h2, rot_mat.view(nframes, nloc, self.dim_emb, 3), sw
  
     def compute_input_stats(

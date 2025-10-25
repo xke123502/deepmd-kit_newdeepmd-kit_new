@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 import copy
 import unittest
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # 强制CPU
 
+import torch
+torch.set_default_device('cpu')  # 确保使用CPU
 import numpy as np
 import torch
 
