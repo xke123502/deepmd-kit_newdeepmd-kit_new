@@ -196,6 +196,8 @@ class RepFlowArgs:
         update_coord: bool = False,
         normalize_coord: bool = False,
         coords_agg: str = "mean",
+        # new added in 2025 1028 - 对称化操作控制参数
+        use_symmetry_op: bool = True,
     ) -> None:
         self.n_dim = n_dim
         self.e_dim = e_dim
@@ -234,6 +236,8 @@ class RepFlowArgs:
         self.update_coord = update_coord
         self.normalize_coord = normalize_coord
         self.coords_agg = coords_agg
+        # new added in 2025 1028 - 保存对称化操作控制参数
+        self.use_symmetry_op = use_symmetry_op
 
     def __getitem__(self, key):
         if hasattr(self, key):
@@ -277,6 +281,8 @@ class RepFlowArgs:
             "update_coord": self.update_coord,
             "normalize_coord": self.normalize_coord,
             "coords_agg": self.coords_agg,
+            # new added in 2025 1028 - 序列化对称化操作控制参数
+            "use_symmetry_op": self.use_symmetry_op,
         }
 
     @classmethod
@@ -394,6 +400,7 @@ class DescrptDPA3(NativeOP, BaseDescriptor):
             update_coord=self.repflow_args.update_coord,  # new added in 2025 1012
             normalize_coord=self.repflow_args.normalize_coord,  # new added in 2025 1012
             coords_agg=self.repflow_args.coords_agg,  # new added in 2025 1012
+            use_symmetry_op=self.repflow_args.use_symmetry_op,  # new added in 2025 1028
             seed=child_seed(seed, 1),
         )
 

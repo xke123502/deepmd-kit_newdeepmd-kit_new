@@ -304,6 +304,7 @@ class DescrptBlockRepflows(DescriptorBlock):
         update_coord: bool = False,  # new added in 2025 1012 - 是否更新坐标(类似EGNN)
         normalize_coord: bool = False,  # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
         coords_agg: str = "mean",  # new added in 2025 1012 - 坐标聚合方式
+        use_symmetry_op: bool = True,  # new added in 2025 1028 - 是否使用对称化操作
     ) -> None:
         super().__init__()
         self.e_rcut = float(e_rcut)
@@ -373,6 +374,8 @@ class DescrptBlockRepflows(DescriptorBlock):
         self.update_coord = update_coord
         self.normalize_coord = normalize_coord
         self.coords_agg = coords_agg
+        # new added in 2025 1028 - 保存对称化操作控制参数
+        self.use_symmetry_op = use_symmetry_op
 
         if edge_use_bessel:
             # 启用Bessel展开时，强制使用距离r而不是1/r
@@ -438,6 +441,7 @@ class DescrptBlockRepflows(DescriptorBlock):
                     update_coord=self.update_coord,  # new added in 2025 1012 - Pass coordinate update flag
                     normalize_coord=self.normalize_coord,  # new added in 2025 1012 - Pass normalization flag
                     coords_agg=self.coords_agg,  # new added in 2025 1012 - Pass aggregation method
+                    use_symmetry_op=self.use_symmetry_op,  # new added in 2025 1028 - Pass symmetry operation flag
                     seed=child_seed(child_seed(seed, 1), ii),
                 )
             ) # 创建RepFlow层
@@ -590,26 +594,14 @@ class DescrptBlockRepflows(DescriptorBlock):
         if not parallel_mode:
             assert mapping is not None
         nframes, nloc, nnei = nlist.shape
-        #print("extended_coord", extended_coord.shape) # extended_coord torch.Size([1, 5184, 3])
-        #print("extended_coord", extended_coord[0]) # extended_coord torch.Size([1, 5184, 3])
         nall = extended_coord.view(nframes, -1).shape[1] // 3
         atype = extended_atype[:, :nloc]
-        #print("nall", nall) # nall 5184
-        #print("extend_ coord", extended_coord.shape) # extend_ coord torch.Size([1, 5184, 3])
-        #print("extend_ coord", extended_coord[0]) # extend_ coord torch.Size([1, 5184, 3])
         # =============================================================================
         # 2. 处理排除的原子对
         # =============================================================================
         # 应用排除掩码：将排除的原子对设为-1
         exclude_mask = self.emask(nlist, extended_atype)
         nlist = torch.where(exclude_mask != 0, nlist, -1)
-        #print("nlist", nlist.shape) # nlist torch.Size([1, 192, 120])
-        #print("nlist", nlist[0]) # nlist torch.Size([1, 192, 120])
-        #print("atype", atype.shape) # atype torch.Size([1, 192])
-        #print("atype", atype[0]) # atype torch.Size([1, 192])
-        #print("exclude_mask", exclude_mask.shape) # exclude_mask torch.Size([1, 192, 120])
-        #print("exclude_mask", exclude_mask[0]) # exclude_mask torch.Size([1, 192, 120])
-
         # =============================================================================
         # 3. 构建环境矩阵
         # =============================================================================
@@ -808,7 +800,7 @@ class DescrptBlockRepflows(DescriptorBlock):
             mapping_orig = mapping.view(nframes, nall)
             mapping = mapping_orig.unsqueeze(-1).expand(-1, -1, self.n_dim)
             #mapping_coord = mapping_orig.unsqueeze(-1).expand(-1, -1, 3)
-        # extended_coord_new = extended_coord.detach().clone()
+            # extended_coord_new = extended_coord.detach().clone()
         
         extended_coord_new = extended_coord.clone()
 

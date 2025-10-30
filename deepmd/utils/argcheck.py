@@ -1609,6 +1609,13 @@ def dpa3_repflow_args():
         "'mean' averages over neighbors (more stable), 'sum' directly sums neighbor contributions. "
         "Only effective when update_coord is True."
     )
+    doc_use_symmetry_op = (
+        "Whether to use symmetry operations (GRRG invariants) in the RepFlow layers. "
+        "Default is True. Symmetry operations compute rotationally invariant features through GRRG transformations. "
+        "When update_coord is enabled (EGNN-style), users may choose to disable this (set to False) "
+        "as coordinate updates already preserve geometric equivariance, but both can be used together for maximum performance. "
+        "Set to True to enable symmetry operations, False to disable them."
+    ) # new added in 2025 1028 - 对称化操作控制参数
 
     return [
         # repflow args
@@ -1782,6 +1789,14 @@ def dpa3_repflow_args():
             optional=True,
             default="mean",
             doc=doc_coords_agg,
+        ),
+        # new added in 2025 1028 - 对称化操作控制参数
+        Argument(
+            "use_symmetry_op",
+            bool,
+            optional=True,
+            default=True,
+            doc=doc_use_symmetry_op,
         ),
     ]
 

@@ -185,6 +185,7 @@ class DescrptDPA3(BaseDescriptor, torch.nn.Module):
             update_coord=self.repflow_args.update_coord,  # new added in 2025 1012
             normalize_coord=self.repflow_args.normalize_coord,  # new added in 2025 1012
             coords_agg=self.repflow_args.coords_agg,  # new added in 2025 1012
+            use_symmetry_op=self.repflow_args.use_symmetry_op,  # new added in 2025 1028
             seed=child_seed(seed, 1),
         )
 

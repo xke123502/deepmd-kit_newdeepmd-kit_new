@@ -108,6 +108,7 @@ class RepFlowLayer(torch.nn.Module):
         update_coord: bool = False,       # new added in 2025 1012 - 是否更新坐标(类似EGNN)
         normalize_coord: bool = False,    # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
         coords_agg: str = "mean",         # new added in 2025 1012 - 坐标聚合方式: 'mean' or 'sum'
+        use_symmetry_op: bool = True,  # new added in 2025 1028 - 是否使用对称化操作
     ) -> None:
         super().__init__()
         self.epsilon = 1e-4  # protection of 1./nnei
@@ -156,6 +157,9 @@ class RepFlowLayer(torch.nn.Module):
         self.update_coord = update_coord
         self.normalize_coord = normalize_coord
         self.coords_agg = coords_agg
+        
+        # new added in 2025 1028 - 对称化操作控制
+        self.use_symmetry_op = use_symmetry_op
 
         assert update_residual_init in [
             "norm",
@@ -192,7 +196,8 @@ class RepFlowLayer(torch.nn.Module):
             )
 
         # node sym (grrg + drrd) # 节点对称化MLP：处理GRRG不变量
-        # 输入维度：节点×axis + 边×axis = 128×4 + 64×4 = 768
+        # 只有在使用对称化操作时才创建相关的MLP
+            # 输入维度：节点×axis + 边×axis = 128×4 + 64×4 = 768
         self.n_sym_dim = n_dim * self.axis_neuron + e_dim * self.axis_neuron
         self.node_sym_linear = MLPLayer(
             self.n_sym_dim,
@@ -201,7 +206,8 @@ class RepFlowLayer(torch.nn.Module):
             init=init,
             seed=child_seed(seed, 2),
         )
-        if self.update_style == "res_residual":
+        # new added in 2025 1028 - 节点对称化MLP残差连接
+        if self.use_symmetry_op and self.update_style == "res_residual":
             self.n_residual.append(
                 get_residual(
                     n_dim,
@@ -988,63 +994,65 @@ class RepFlowLayer(torch.nn.Module):
         
         # 4.1 节点自更新：通过MLP处理节点特征
         node_self_mlp = self.act(self.node_self_mlp(node_ebd))
-        n_update_list.append(node_self_mlp)
+        n_update_list.append(node_self_mlp) # 节点更新列表，包含原始节点, 自更新节点表征
         
         # 4.2 节点对称化更新：基于GRRG不变量的几何信息
         # （从边信息聚合到节点）
         # 这部分实现了旋转不变性，通过对称化操作处理几何信息
-        node_sym_list: list[torch.Tensor] = []
-        
-        # 计算边嵌入的GRRG不变量
-        # symmetrization_op: 边嵌入 → 对称化不变量 [nf, nloc, axis*e_dim]
-        node_sym_list.append(
-            self.symmetrization_op(
-                edge_ebd,
-                h2,
-                nlist_mask,
-                sw,
-                self.axis_neuron,
+        if self.use_symmetry_op:
+            node_sym_list: list[torch.Tensor] = []
+            
+            # 计算边嵌入的GRRG不变量
+            # symmetrization_op: 边嵌入 → 对称化不变量 [nf, nloc, axis*e_dim]
+            node_sym_list.append(
+                self.symmetrization_op(
+                    edge_ebd,
+                    h2,
+                    nlist_mask,
+                    sw,
+                    self.axis_neuron,
+                )
+                if not self.use_dynamic_sel
+                else self.symmetrization_op_dynamic(  # 动态选择模式
+                    edge_ebd,
+                    h2,
+                    sw,
+                    owner=n2e_index,
+                    num_owner=nb * nloc,
+                    nb=nb,
+                    nloc=nloc,
+                    scale_factor=self.dynamic_e_sel ** (-0.5),
+                    axis_neuron=self.axis_neuron,
+                )
             )
-            if not self.use_dynamic_sel
-            else self.symmetrization_op_dynamic(  # 动态选择模式
-                edge_ebd,
-                h2,
-                sw,
-                owner=n2e_index,
-                num_owner=nb * nloc,
-                nb=nb,
-                nloc=nloc,
-                scale_factor=self.dynamic_e_sel ** (-0.5),
-                axis_neuron=self.axis_neuron,
+            
+            # 计算邻居节点的GRRG不变量
+            node_sym_list.append(
+                self.symmetrization_op(
+                    nei_node_ebd,
+                    h2,
+                    nlist_mask,
+                    sw,
+                    self.axis_neuron,
+                )
+                if not self.use_dynamic_sel
+                else self.symmetrization_op_dynamic(  # 动态选择模式
+                    nei_node_ebd,
+                    h2,
+                    sw,
+                    owner=n2e_index,
+                    num_owner=nb * nloc,
+                    nb=nb,
+                    nloc=nloc,
+                    scale_factor=self.dynamic_e_sel ** (-0.5),
+                    axis_neuron=self.axis_neuron,
+                )
             )
-        )
-        
-        # 计算邻居节点的GRRG不变量
-        node_sym_list.append(
-            self.symmetrization_op(
-                nei_node_ebd,
-                h2,
-                nlist_mask,
-                sw,
-                self.axis_neuron,
-            )
-            if not self.use_dynamic_sel
-            else self.symmetrization_op_dynamic(  # 动态选择模式
-                nei_node_ebd,
-                h2,
-                sw,
-                owner=n2e_index,
-                num_owner=nb * nloc,
-                nb=nb,
-                nloc=nloc,
-                scale_factor=self.dynamic_e_sel ** (-0.5),
-                axis_neuron=self.axis_neuron,
-            )
-        )
-        
-        # 将两个GRRG不变量拼接并通过MLP处理
-        node_sym = self.act(self.node_sym_linear(torch.cat(node_sym_list, dim=-1)))
-        n_update_list.append(node_sym)
+            
+            # 将两个GRRG不变量拼接并通过MLP处理
+            node_sym = self.act(self.node_sym_linear(torch.cat(node_sym_list, dim=-1)))
+            
+            n_update_list.append(node_sym) # # 节点更新列表，包含原始节点, 自更新节点表征, 对称化节点表征
 
         # =============================================================================
         # 5. 节点-边消息传递
@@ -1155,7 +1163,7 @@ class RepFlowLayer(torch.nn.Module):
             n_update_list.append(node_edge_update)
             
         # 5.5 更新节点表征（使用残差连接）
-        n_updated = self.list_update(n_update_list, "node")
+        n_updated = self.list_update(n_update_list, "node") # 
 
         # =============================================================================
         # 5.6 坐标更新（完全复制节点-边消息传递的模式，new added in 2025 1012）
@@ -1724,10 +1732,11 @@ class RepFlowLayer(torch.nn.Module):
             "update_coord": self.update_coord,  # new added in 2025 1012
             "normalize_coord": self.normalize_coord,  # new added in 2025 1012
             "coords_agg": self.coords_agg,  # new added in 2025 1012
+            "use_symmetry_op": self.use_symmetry_op,  # new added in 2025 1028
             "node_self_mlp": self.node_self_mlp.serialize(),
-            "node_sym_linear": self.node_sym_linear.serialize(),
             "node_edge_linear": self.node_edge_linear.serialize(),
             "edge_self_linear": self.edge_self_linear.serialize(),
+            "node_sym_linear": self.node_sym_linear.serialize(),
         }
         if self.update_angle:
             data.update(
