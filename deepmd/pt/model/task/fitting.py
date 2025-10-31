@@ -51,6 +51,8 @@ class Fitting(torch.nn.Module, BaseFitting):
     # plugin moved to BaseFitting
 
     def __new__(cls, *args, **kwargs):
+        # 通过 BaseFitting 的插件注册机制按 "type" 动态分派到具体 FittingNet（如 "ener"）。
+        # 当直接实例化 Fitting(**kwargs) 时，这里会根据 kwargs["type"] 选择已注册子类。
         if cls is Fitting:
             return BaseFitting.__new__(BaseFitting, *args, **kwargs)
         return super().__new__(cls)
@@ -228,8 +230,14 @@ class GeneralFitting(Fitting):
         type_map: Optional[list[str]] = None,
         use_aparam_as_mask: bool = False,
         init: str = "default",  # new added in 2025 0923 - Fitting network initialization method
+        use_pre_norm: bool = False,  # new added in 2025 1030 - 是否使用输入归一化
+        pre_norm_type: str = "layer",  # new added in 2025 1030 - 归一化类型
         **kwargs,
     ) -> None:
+        # 说明：GeneralFitting 是 PT 后端通用拟合网络骨架（能量/偶极/极化/属性等共享框架），
+        # 子类负责定义输出维度与输出名，输入为 per-atom descriptor，
+        # 可选拼接 frame/atomic 参数与 case embedding，经 MLP(FittingNet) 得到每原子属性，
+        # 再叠加每元素偏置 bias_atom_e，并按类型掩码聚合输出。
         super().__init__()
         self.var_name = var_name
         self.ntypes = ntypes
@@ -266,6 +274,7 @@ class GeneralFitting(Fitting):
         bias_atom_e = bias_atom_e.view([self.ntypes, net_dim_out])
         if not self.mixed_types:
             assert self.ntypes == bias_atom_e.shape[0], "Element count mismatches!"
+        # bias_atom_e：每种元素的原子基线（偏置），以 buffer 形式保存，参与设备/精度迁移但不作为可学习参数
         self.register_buffer("bias_atom_e", bias_atom_e)
 
         if self.numb_fparam > 0:
@@ -300,6 +309,7 @@ class GeneralFitting(Fitting):
         else:
             self.case_embd = None
 
+        # 组合输入维度：descriptor + fparam(可选) + aparam(可选/若非掩码) + case_embd(可选)
         in_dim = (
             self.dim_descrpt
             + self.numb_fparam
@@ -326,6 +336,25 @@ class GeneralFitting(Fitting):
                 for ii in range(self.ntypes if not self.mixed_types else 1)
             ],
         )
+        # mixed_types=True：仅构建一个共享 FittingNet；否则为每个元素类型各构建一个 FittingNet。
+        
+        # new added in 2025 1030 - 输入端归一化（复现 MatRIS readout 架构）
+        # 遵循 DeepMD-kit 风格：用 None + assert 处理 TorchScript 兼容性
+        self.use_pre_norm = use_pre_norm
+        self.pre_norm_type = pre_norm_type
+        if self.use_pre_norm:
+            if pre_norm_type == "layer":
+                self.pre_norm = torch.nn.LayerNorm(self.dim_descrpt)
+            elif pre_norm_type == "rms":
+                self.pre_norm = torch.nn.RMSNorm(self.dim_descrpt)  # torch >= 2.6.0
+            else:
+                raise ValueError(
+                    f"Unsupported pre_norm_type '{pre_norm_type}'. "
+                    "Supported options are: 'layer', 'rms'."
+                )
+        else:
+            self.pre_norm = None
+        
         # set trainable
         for param in self.parameters():
             param.requires_grad = self.trainable
@@ -509,10 +538,18 @@ class GeneralFitting(Fitting):
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
     ):
+        # 前向主干：类型/精度对齐 → 规范化并拼接 fparam/aparam/case_embd →
+        # 经过 FittingNet 得到每原子属性 → 加上 per-type 偏置 bias_atom_e → 应用类型排除掩码
         # cast the input to internal precsion
         xx = descriptor.to(self.prec)
         fparam = fparam.to(self.prec) if fparam is not None else None
         aparam = aparam.to(self.prec) if aparam is not None else None
+        
+        # new added in 2025 1030 - 输入端归一化（复现 MatRIS readout_norm）
+        # 遵循 DeepMD-kit 风格：用 assert 让 TorchScript 推断类型
+        if self.use_pre_norm:
+            assert self.pre_norm is not None, "pre_norm should not be None when use_pre_norm=True"
+            xx = self.pre_norm(xx)
 
         if self.remove_vaccum_contribution is not None:
             # TODO: compute the input for vaccm when remove_vaccum_contribution is set
@@ -556,7 +593,7 @@ class GeneralFitting(Fitting):
                     [xx_zeros, fparam],
                     dim=-1,
                 )
-        # check aparam dim, concate to input descriptor
+        # check aparam dim, concate to input descriptor（当 aparam 不作为掩码时才拼接）
         if self.numb_aparam > 0 and not self.use_aparam_as_mask:
             assert aparam is not None, "aparam should not be None"
             assert self.aparam_avg is not None
@@ -600,6 +637,7 @@ class GeneralFitting(Fitting):
             device=descriptor.device,
         )  # jit assertion
         if self.mixed_types:
+            # 单一共享网络：一次前向，按 atype 加偏置
             atom_property = self.filter_layers.networks[0](xx)
             if xx_zeros is not None:
                 atom_property -= self.filter_layers.networks[0](xx_zeros)
@@ -607,6 +645,7 @@ class GeneralFitting(Fitting):
                 outs + atom_property + self.bias_atom_e[atype].to(self.prec)
             )  # Shape is [nframes, natoms[0], net_dim_out]
         else:
+            # 多网络：按元素类型逐一前向，并用布尔掩码聚合
             for type_i, ll in enumerate(self.filter_layers.networks):
                 mask = (atype == type_i).unsqueeze(-1)
                 mask = torch.tile(mask, (1, 1, net_dim_out))
@@ -625,7 +664,7 @@ class GeneralFitting(Fitting):
                     outs + atom_property
                 )  # Shape is [nframes, natoms[0], net_dim_out]
         # nf x nloc
-        mask = self.emask(atype).to(torch.bool)
+        mask = self.emask(atype).to(torch.bool)  # 根据 exclude_types 屏蔽被排除类型的原子贡献
         # nf x nloc x nod
         outs = torch.where(mask[:, :, None], outs, 0.0)
         return {self.var_name: outs}

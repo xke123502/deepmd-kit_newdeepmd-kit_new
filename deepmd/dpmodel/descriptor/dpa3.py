@@ -198,6 +198,10 @@ class RepFlowArgs:
         coords_agg: str = "mean",
         # new added in 2025 1028 - 对称化操作控制参数
         use_symmetry_op: bool = True,
+        # new added in 2025 1031 - MatRIS-style gated MLP switches
+        use_gated_mlp: bool = False,
+        gmlp_targets: list[str] = [],
+        gmlp_norm_type: str = "layer",
     ) -> None:
         self.n_dim = n_dim
         self.e_dim = e_dim
@@ -238,6 +242,10 @@ class RepFlowArgs:
         self.coords_agg = coords_agg
         # new added in 2025 1028 - 保存对称化操作控制参数
         self.use_symmetry_op = use_symmetry_op
+        # gMLP
+        self.use_gated_mlp = use_gated_mlp
+        self.gmlp_targets = gmlp_targets
+        self.gmlp_norm_type = gmlp_norm_type
 
     def __getitem__(self, key):
         if hasattr(self, key):
@@ -283,6 +291,10 @@ class RepFlowArgs:
             "coords_agg": self.coords_agg,
             # new added in 2025 1028 - 序列化对称化操作控制参数
             "use_symmetry_op": self.use_symmetry_op,
+            # new added in 2025 1031 - 序列化 gMLP 配置
+            "use_gated_mlp": self.use_gated_mlp,
+            "gmlp_targets": self.gmlp_targets,
+            "gmlp_norm_type": self.gmlp_norm_type,
         }
 
     @classmethod

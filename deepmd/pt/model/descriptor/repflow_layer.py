@@ -48,6 +48,7 @@ from deepmd.pt.model.descriptor.repformer_layer import (
 )
 from deepmd.pt.model.network.mlp import (
     MLPLayer,  # 基础MLP层
+    GatedMLP,
 )
 from deepmd.pt.model.network.utils import (
     aggregate,  # 聚合函数
@@ -160,6 +161,10 @@ class RepFlowLayer(torch.nn.Module):
         
         # new added in 2025 1028 - 对称化操作控制
         self.use_symmetry_op = use_symmetry_op
+        # gMLP（MatRIS风格）配置
+        self.use_gated_mlp = use_gated_mlp
+        self.gmlp_targets = gmlp_targets
+        self.gmlp_norm_type = gmlp_norm_type
 
         assert update_residual_init in [
             "norm",
@@ -206,6 +211,18 @@ class RepFlowLayer(torch.nn.Module):
             init=init,
             seed=child_seed(seed, 2),
         )
+        # gMLP for node sym (optional)
+        self.node_sym_gmlp = (
+            GatedMLP(
+                input_dim=self.n_sym_dim,
+                output_dim=n_dim,
+                hidden_dim=0,
+                norm_type=self.gmlp_norm_type,
+                activation="silu",
+            )
+            if (self.use_gated_mlp and ("node_sym" in self.gmlp_targets))
+            else None
+        )
         # new added in 2025 1028 - 节点对称化MLP残差连接
         if self.use_symmetry_op and self.update_style == "res_residual":
             self.n_residual.append(
@@ -227,6 +244,17 @@ class RepFlowLayer(torch.nn.Module):
             init=init,
             seed=child_seed(seed, 4),
         ) 
+        self.node_edge_gmlp = (
+            GatedMLP(
+                input_dim=self.edge_info_dim,
+                output_dim=self.n_multi_edge_message * n_dim,
+                hidden_dim=0,
+                norm_type=self.gmlp_norm_type,
+                activation="silu",
+            )
+            if (self.use_gated_mlp and ("node_edge" in self.gmlp_targets))
+            else None
+        )
         # 如果使用残差连接，添加残差权重
         if self.update_style == "res_residual":
             for head_index in range(self.n_multi_edge_message):
@@ -251,6 +279,17 @@ class RepFlowLayer(torch.nn.Module):
             precision=precision,
             init=init,
             seed=child_seed(seed, 6),
+        )
+        self.edge_self_gmlp = (
+            GatedMLP(
+                input_dim=self.edge_info_dim,
+                output_dim=e_dim,
+                hidden_dim=0,
+                norm_type=self.gmlp_norm_type,
+                activation="silu",
+            )
+            if (self.use_gated_mlp and ("edge_self" in self.gmlp_targets))
+            else None
         )
         if self.update_style == "res_residual":
             self.e_residual.append(
@@ -315,6 +354,17 @@ class RepFlowLayer(torch.nn.Module):
                 init=init,
                 seed=child_seed(seed, 10),
             )
+            self.edge_angle_gmlp = (
+                GatedMLP(
+                    input_dim=self.angle_dim,
+                    output_dim=self.e_dim,
+                    hidden_dim=0,
+                    norm_type=self.gmlp_norm_type,
+                    activation="silu",
+                )
+                if (self.use_gated_mlp and ("edge_angle" in self.gmlp_targets))
+                else None
+            )
             self.edge_angle_linear2 = MLPLayer( # 第二层：边表征 → 边表征（进一步处理）
                 self.e_dim,
                 self.e_dim,
@@ -341,6 +391,17 @@ class RepFlowLayer(torch.nn.Module):
                 init=init,
                 seed=child_seed(seed, 13),
             )
+            self.angle_self_gmlp = (
+                GatedMLP(
+                    input_dim=self.angle_dim,
+                    output_dim=self.a_dim,
+                    hidden_dim=0,
+                    norm_type=self.gmlp_norm_type,
+                    activation="silu",
+                )
+                if (self.use_gated_mlp and ("angle_self" in self.gmlp_targets))
+                else None
+            )
             if self.update_style == "res_residual":
                 self.a_residual.append(
                     get_residual(
@@ -358,6 +419,8 @@ class RepFlowLayer(torch.nn.Module):
             self.a_compress_n_linear = None
             self.a_compress_e_linear = None
             self.angle_dim = 0
+            self.edge_angle_gmlp = None
+            self.angle_self_gmlp = None
         
         # =============================================================================
         # 5. 坐标更新相关层（仿照EGNN，new added in 2025 1012）
@@ -1049,9 +1112,13 @@ class RepFlowLayer(torch.nn.Module):
                 )
             )
             
-            # 将两个GRRG不变量拼接并通过MLP处理
-            node_sym = self.act(self.node_sym_linear(torch.cat(node_sym_list, dim=-1)))
-            
+            # 将两个GRRG不变量拼接并通过MLP或gMLP处理
+            node_sym_input = torch.cat(node_sym_list, dim=-1)
+            if self.use_gated_mlp and self.node_sym_gmlp is not None:
+                node_sym = self.node_sym_gmlp(node_sym_input)
+            else:
+                node_sym = self.act(self.node_sym_linear(node_sym_input))
+            # here is the update1 of node
             n_update_list.append(node_sym) # # 节点更新列表，包含原始节点, 自更新节点表征, 对称化节点表征
 
         # =============================================================================
@@ -1059,7 +1126,12 @@ class RepFlowLayer(torch.nn.Module):
         # =============================================================================
 
         # 5.1 构建边信息（用于消息传递）
-        if not self.optim_update:
+        need_dense_edge_info = (not self.optim_update) or (
+            self.use_gated_mlp and (
+                (self.node_edge_gmlp is not None) or (self.edge_self_gmlp is not None)
+            )
+        )
+        if need_dense_edge_info:
            # print("self.optim_update --- False 1", self.optim_update)
             if not self.use_dynamic_sel:
                 # 标准模式：拼接节点、邻居节点、边信息
@@ -1100,31 +1172,39 @@ class RepFlowLayer(torch.nn.Module):
         # 通过边信息更新节点表征，实现消息传递
         #print("self.optim_update", self.optim_update)
 
-        if not self.optim_update:
+        if self.use_gated_mlp and (self.node_edge_gmlp is not None):
             assert edge_info is not None
-            node_edge_update = self.act(
-                self.node_edge_linear(edge_info)
-            ) * sw.unsqueeze(-1)  # 应用开关函数
+            node_edge_update = self.node_edge_gmlp(edge_info) * sw.unsqueeze(-1)
         else:
-            # 优化模式：直接计算，避免构建大型中间张量
-            node_edge_update = self.act(
-                self.optim_edge_update(
-                    node_ebd,
-                    node_ebd_ext,
-                    edge_ebd,
-                    nlist,
-                    "node",
+            need_dense_angle_info = (not self.optim_update) or (
+                self.use_gated_mlp and (
+                    (self.edge_angle_gmlp is not None) or (self.angle_self_gmlp is not None)
                 )
-                if not self.use_dynamic_sel
-                else self.optim_edge_update_dynamic(
-                    node_ebd,
-                    node_ebd_ext,
-                    edge_ebd,
-                    n2e_index,
-                    n_ext2e_index,
-                    "node",
-                )
-            ) * sw.unsqueeze(-1)  # 应用开关函数
+            )
+            if need_dense_angle_info:
+                assert edge_info is not None
+                node_edge_update = self.act(
+                    self.node_edge_linear(edge_info)
+                ) * sw.unsqueeze(-1)
+            else:
+                node_edge_update = self.act(
+                    self.optim_edge_update(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        nlist,
+                        "node",
+                    )
+                    if not self.use_dynamic_sel
+                    else self.optim_edge_update_dynamic(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        n2e_index,
+                        n_ext2e_index,
+                        "node",
+                    )
+                ) * sw.unsqueeze(-1)
             
         #print("self.use_dynamic_sel", self.use_dynamic_sel)
         #print("edge_info", edge_info.shape)    
@@ -1244,29 +1324,32 @@ class RepFlowLayer(torch.nn.Module):
         # =============================================================================
         
         # 6.1 边自更新：通过边信息更新边表征
-        if not self.optim_update:
+        if self.use_gated_mlp and (self.edge_self_gmlp is not None):
             assert edge_info is not None
-            edge_self_update = self.act(self.edge_self_linear(edge_info))
+            edge_self_update = self.edge_self_gmlp(edge_info)
         else:
-            # 优化模式：直接计算边更新
-            edge_self_update = self.act(
-                self.optim_edge_update(
-                    node_ebd,
-                    node_ebd_ext,
-                    edge_ebd,
-                    nlist,
-                    "edge",
+            if not self.optim_update:
+                assert edge_info is not None
+                edge_self_update = self.act(self.edge_self_linear(edge_info))
+            else:
+                edge_self_update = self.act(
+                    self.optim_edge_update(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        nlist,
+                        "edge",
+                    )
+                    if not self.use_dynamic_sel
+                    else self.optim_edge_update_dynamic(
+                        node_ebd,
+                        node_ebd_ext,
+                        edge_ebd,
+                        n2e_index,
+                        n_ext2e_index,
+                        "edge",
+                    )
                 )
-                if not self.use_dynamic_sel
-                else self.optim_edge_update_dynamic(
-                    node_ebd,
-                    node_ebd_ext,
-                    edge_ebd,
-                    n2e_index,
-                    n_ext2e_index,
-                    "edge",
-                )
-            )
         e_update_list.append(edge_self_update)
 
         # =============================================================================
@@ -1364,29 +1447,33 @@ class RepFlowLayer(torch.nn.Module):
 
             # 7.4 边-角度消息传递 G2 MP
             # 通过角度信息更新边表征，实现三体相互作用建模
-            if not self.optim_update:
+            if self.use_gated_mlp and (self.edge_angle_gmlp is not None):
                 assert angle_info is not None
-                edge_angle_update = self.act(self.edge_angle_linear1(angle_info))
+                edge_angle_update = self.edge_angle_gmlp(angle_info)
             else:
-                # 优化模式：直接计算角度消息
-                edge_angle_update = self.act(
-                    self.optim_angle_update(
-                        angle_ebd,
-                        node_ebd_for_angle,
-                        edge_ebd_for_angle,
-                        "edge",
+                if not self.optim_update:
+                    assert angle_info is not None
+                    edge_angle_update = self.act(self.edge_angle_linear1(angle_info))
+                else:
+                    # 优化模式：直接计算角度消息
+                    edge_angle_update = self.act(
+                        self.optim_angle_update(
+                            angle_ebd,
+                            node_ebd_for_angle,
+                            edge_ebd_for_angle,
+                            "edge",
+                        )
+                        if not self.use_dynamic_sel
+                        else self.optim_angle_update_dynamic(
+                            angle_ebd,
+                            node_ebd_for_angle,
+                            edge_ebd_for_angle,
+                            n2a_index,
+                            eij2a_index,
+                            eik2a_index,
+                            "edge",
+                        )
                     )
-                    if not self.use_dynamic_sel
-                    else self.optim_angle_update_dynamic(
-                        angle_ebd,
-                        node_ebd_for_angle,
-                        edge_ebd_for_angle,
-                        n2a_index,
-                        eij2a_index,
-                        eik2a_index,
-                        "edge",
-                    )
-                )
 
             # 7.5 处理角度消息的权重和聚合
             if not self.use_dynamic_sel:
@@ -1464,29 +1551,33 @@ class RepFlowLayer(torch.nn.Module):
 
             # 7.9 角度自更新消息
             # 通过角度信息更新角度表征
-            if not self.optim_update:
+            if self.use_gated_mlp and (self.angle_self_gmlp is not None):
                 assert angle_info is not None
-                angle_self_update = self.act(self.angle_self_linear(angle_info))
+                angle_self_update = self.angle_self_gmlp(angle_info)
             else:
-                # 优化模式：直接计算角度自更新
-                angle_self_update = self.act(
-                    self.optim_angle_update(
-                        angle_ebd,
-                        node_ebd_for_angle,
-                        edge_ebd_for_angle,
-                        "angle",
+                if not self.optim_update:
+                    assert angle_info is not None
+                    angle_self_update = self.act(self.angle_self_linear(angle_info))
+                else:
+                    # 优化模式：直接计算角度自更新
+                    angle_self_update = self.act(
+                        self.optim_angle_update(
+                            angle_ebd,
+                            node_ebd_for_angle,
+                            edge_ebd_for_angle,
+                            "angle",
+                        )
+                        if not self.use_dynamic_sel
+                        else self.optim_angle_update_dynamic(
+                            angle_ebd,
+                            node_ebd_for_angle,
+                            edge_ebd_for_angle,
+                            n2a_index,
+                            eij2a_index,
+                            eik2a_index,
+                            "angle",
+                        )
                     )
-                    if not self.use_dynamic_sel
-                    else self.optim_angle_update_dynamic(
-                        angle_ebd,
-                        node_ebd_for_angle,
-                        edge_ebd_for_angle,
-                        n2a_index,
-                        eij2a_index,
-                        eik2a_index,
-                        "angle",
-                    )
-                )
             a_update_list.append(angle_self_update)
         else:
             # 如果未启用角度更新，只更新边表征

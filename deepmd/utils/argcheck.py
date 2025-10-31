@@ -1617,6 +1617,15 @@ def dpa3_repflow_args():
         "Set to True to enable symmetry operations, False to disable them."
     ) # new added in 2025 1028 - 对称化操作控制参数
 
+    doc_use_gated_mlp = (
+        "Whether to use gated-MLP on concatenated features (MatRIS-style). "
+        "Applies SiLU(Norm(core)) * Sigmoid(Norm(gate)) on selected branches."
+    )
+    doc_gmlp_targets = (
+        "Targets to enable gated-MLP. Any of ['node_sym','node_edge','edge_self','edge_angle','angle_self']"
+    )
+    doc_gmlp_norm_type = "Normalization type for gated-MLP: 'layer' or 'rms'."
+
     return [
         # repflow args
         Argument("n_dim", int, optional=True, default=128, doc=doc_n_dim),
@@ -1798,6 +1807,28 @@ def dpa3_repflow_args():
             default=True,
             doc=doc_use_symmetry_op,
         ),
+        # gMLP (MatRIS-style gated MLP) switches
+        Argument(
+            "use_gated_mlp",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_only_pt_supported + doc_use_gated_mlp,
+        ),
+        Argument(
+            "gmlp_targets",
+            list[str],
+            optional=True,
+            default=[],
+            doc=doc_only_pt_supported + doc_gmlp_targets,
+        ),
+        Argument(
+            "gmlp_norm_type",
+            str,
+            optional=True,
+            default="layer",
+            doc=doc_only_pt_supported + doc_gmlp_norm_type,
+        ),
     ]
 
 
@@ -1904,6 +1935,9 @@ def fitting_ener():
     )
     doc_fitting_init_method = 'The initialization method for MLP layers in the fitting network. Supported options are: "default" (Xavier-style normal distribution, conservative), "kaiming_uniform_normal_dt" (Kaiming uniform for weights, normal for timestep - PyTorch standard), "default_uniform" (Xavier-style but uniform distribution), "pytorch_normal" (PyTorch nn.Embedding style: N(0,1) normal distribution), "kaiming_uniform" (Standard Kaiming uniform), "glorot_uniform" (Xavier uniform), "trunc_normal" (Truncated normal), "normal" (Kaiming normal), "zero" (Zero initialization). Default follows DeepMD original conservative method for training stability.'
     # new added in 2025 0923 - Support for customizable initialization methods in fitting network
+    doc_use_pre_norm = "Whether to use a normalization layer before the fitting network (to replicate MatRIS readout architecture). When enabled, the descriptor output will be normalized before entering the MLP layers. Default is False."
+    doc_pre_norm_type = 'The type of normalization layer to use when use_pre_norm is True. Supported options are: "layer" (LayerNorm, standard normalization with learnable scale and shift), "rms" (RMSNorm, efficient normalization without centering, commonly used in modern architectures like LLaMA). Default is "layer".'
+    # new added in 2025 1030 - Support for input normalization in fitting network (MatRIS-style)
     return [
         Argument("numb_fparam", int, optional=True, default=0, doc=doc_numb_fparam),
         Argument("numb_aparam", int, optional=True, default=0, doc=doc_numb_aparam),
@@ -1964,6 +1998,20 @@ def fitting_ener():
             default="default",
             doc=doc_only_pt_supported + doc_fitting_init_method,
         ), # new added in 2025 0923 - Fitting network initialization method
+        Argument(
+            "use_pre_norm",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_only_pt_supported + doc_use_pre_norm,
+        ), # new added in 2025 1030 - Input normalization for fitting network
+        Argument(
+            "pre_norm_type",
+            str,
+            optional=True,
+            default="layer",
+            doc=doc_only_pt_supported + doc_pre_norm_type,
+        ), # new added in 2025 1030 - Normalization type
     ]
 
 
@@ -2038,6 +2086,9 @@ def fitting_property():
     doc_trainable = "Whether the parameters in the fitting net are trainable. This option can be\n\n\
 - bool: True if all parameters of the fitting net are trainable, False otherwise.\n\n\
 - list of bool: Specifies if each layer is trainable. Since the fitting net is composed by hidden layers followed by a output layer, the length of this list should be equal to len(`neuron`)+1."
+    doc_use_pre_norm = "Whether to use a normalization layer before the fitting network (to replicate MatRIS readout architecture). When enabled, the descriptor output will be normalized before entering the MLP layers. Default is False."
+    doc_pre_norm_type = 'The type of normalization layer to use when use_pre_norm is True. Supported options are: "layer" (LayerNorm), "rms" (RMSNorm). Default is "layer".'
+    # new added in 2025 1030 - Support for input normalization in fitting network (MatRIS-style)
     return [
         Argument("numb_fparam", int, optional=True, default=0, doc=doc_numb_fparam),
         Argument("numb_aparam", int, optional=True, default=0, doc=doc_numb_aparam),
@@ -2081,6 +2132,20 @@ def fitting_property():
             default=True,
             doc=doc_trainable,
         ),
+        Argument(
+            "use_pre_norm",
+            bool,
+            optional=True,
+            default=False,
+            doc=doc_use_pre_norm,
+        ), # new added in 2025 1030 - Input normalization for fitting network
+        Argument(
+            "pre_norm_type",
+            str,
+            optional=True,
+            default="layer",
+            doc=doc_pre_norm_type,
+        ), # new added in 2025 1030 - Normalization type
     ]
 
 

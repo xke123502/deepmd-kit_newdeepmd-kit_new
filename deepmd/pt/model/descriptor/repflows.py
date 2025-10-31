@@ -305,6 +305,10 @@ class DescrptBlockRepflows(DescriptorBlock):
         normalize_coord: bool = False,  # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
         coords_agg: str = "mean",  # new added in 2025 1012 - 坐标聚合方式
         use_symmetry_op: bool = True,  # new added in 2025 1028 - 是否使用对称化操作
+        # gMLP 开关（MatRIS风格门控MLP）
+        use_gated_mlp: bool = False,
+        gmlp_targets: list[str] = [],
+        gmlp_norm_type: str = "layer",
     ) -> None:
         super().__init__()
         self.e_rcut = float(e_rcut)
@@ -376,6 +380,10 @@ class DescrptBlockRepflows(DescriptorBlock):
         self.coords_agg = coords_agg
         # new added in 2025 1028 - 保存对称化操作控制参数
         self.use_symmetry_op = use_symmetry_op
+        # gMLP 配置
+        self.use_gated_mlp = use_gated_mlp
+        self.gmlp_targets = gmlp_targets
+        self.gmlp_norm_type = gmlp_norm_type
 
         if edge_use_bessel:
             # 启用Bessel展开时，强制使用距离r而不是1/r
@@ -442,6 +450,9 @@ class DescrptBlockRepflows(DescriptorBlock):
                     normalize_coord=self.normalize_coord,  # new added in 2025 1012 - Pass normalization flag
                     coords_agg=self.coords_agg,  # new added in 2025 1012 - Pass aggregation method
                     use_symmetry_op=self.use_symmetry_op,  # new added in 2025 1028 - Pass symmetry operation flag
+                    use_gated_mlp=self.use_gated_mlp,
+                    gmlp_targets=self.gmlp_targets,
+                    gmlp_norm_type=self.gmlp_norm_type,
                     seed=child_seed(child_seed(seed, 1), ii),
                 )
             ) # 创建RepFlow层

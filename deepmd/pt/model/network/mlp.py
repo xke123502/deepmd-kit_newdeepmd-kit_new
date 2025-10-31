@@ -564,3 +564,67 @@ class NetworkCollection(DPNetworkCollection, nn.Module):
         nn.Module.__init__(self)
         # 将网络列表转换为PyTorch的ModuleList，确保参数注册
         self.networks = self._networks = torch.nn.ModuleList(self._networks)
+
+
+# =============================================================================
+# Gated MLP (MatRIS-style): core ⊙ gate with normalization
+# =============================================================================
+
+class GatedMLP(nn.Module):
+    """MatRIS-style gated MLP: SiLU(Norm(core(MLP(x)))) * Sigmoid(Norm(gate(MLP(x))))
+
+    Notes
+    -----
+    - 默认使用无隐层（与当前 RepFlow 单层 MLP 对齐）；后续可扩展多层。
+    - 归一化支持: LayerNorm / RMSNorm（PyTorch 2.8）。
+    - 激活固定使用 SiLU（主分支）与 Sigmoid（门分支）。
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        *,
+        hidden_dim: Optional[Union[int, list[int]]] = None,
+        norm_type: str = "layer",
+        activation: str = "silu",
+        dropout: float = 0.0,
+        bias: bool = True,
+    ) -> None:
+        super().__init__()
+
+        # 主/门分支的多层感知机（复用本文件的 MLP）
+        self.core_mlp = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim if hidden_dim is not None else 0,
+            output_dim=output_dim,
+            dropout=dropout,
+            activation=activation,
+            bias=bias,
+        )
+        self.gate_mlp = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim if hidden_dim is not None else 0,
+            output_dim=output_dim,
+            dropout=dropout,
+            activation=activation,
+            bias=bias,
+        )
+
+        # 归一化与激活
+        if norm_type == "layer":
+            self.core_norm = nn.LayerNorm(output_dim)
+            self.gate_norm = nn.LayerNorm(output_dim)
+        elif norm_type == "rms":
+            self.core_norm = nn.RMSNorm(output_dim)
+            self.gate_norm = nn.RMSNorm(output_dim)
+        else:
+            raise ValueError("Unsupported norm_type for GatedMLP: %s" % norm_type)
+
+        self.core_act = ActivationFn("silu")
+        self.gate_act = ActivationFn("sigmoid")
+
+    def forward(self, xx: torch.Tensor) -> torch.Tensor:
+        core = self.core_act(self.core_norm(self.core_mlp(xx)))
+        gate = self.gate_act(self.gate_norm(self.gate_mlp(xx)))
+        return core * gate
