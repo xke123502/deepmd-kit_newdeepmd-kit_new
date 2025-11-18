@@ -149,9 +149,7 @@ class ModelWrapper(torch.nn.Module):
         do_atomic_virial=False,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
-        sid: Optional[int] = None,        # ========== 改动：新增参数 (new added in 2025-11-14) ==========
-        fid: Optional[list] = None,        # ========== 改动：新增参数 (new added in 2025-11-14) ==========
-        is_train: Optional[bool] = True,   # ========== 改动：新增参数，标识training/validation (new added in 2025-11-14) ==========
+        graph: Optional[torch.Tensor] = None,  # ========== 新增：graph 数据 (new) ==========
     ):
         if not self.multi_task:
             task_key = "Default"
@@ -168,19 +166,13 @@ class ModelWrapper(torch.nn.Module):
             "aparam": aparam,
         }
         
-        # ========== 改动：动态检查模型是否支持 sid、fid、is_train (new added in 2025-11-14) ==========
-        # 目的：向后兼容，不支持的模型不会报错
-        # 原理：使用inspect检查模型的forward方法签名，只在支持时才传递这些参数
-        # 关键：is_train用于区分training/validation，让模型选择正确的systems列表
+        # ========== 改动：动态检查模型是否支持 graph 参数 (new) ==========
+        # 目的：向后兼容，不支持 graph 的模型不会报错
         import inspect
         model_forward = self.model[task_key].forward
         forward_params = inspect.signature(model_forward).parameters
-        if "sid" in forward_params:
-            input_dict["sid"] = sid
-        if "fid" in forward_params:
-            input_dict["fid"] = fid
-        if "is_train" in forward_params:  # ← 关键：检查模型是否支持is_train参数
-            input_dict["is_train"] = is_train  # ← 传递is_train到模型
+        if "graph" in forward_params:
+            input_dict["graph"] = graph
         has_spin = getattr(self.model[task_key], "has_spin", False)
         if callable(has_spin):
             has_spin = has_spin()

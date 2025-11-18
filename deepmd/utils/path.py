@@ -184,7 +184,7 @@ class DPOSPath(DPPath):
         np.ndarray
             loaded NumPy array
         """
-        return np.load(str(self.path))
+        return np.load(str(self.path), allow_pickle=True) # new added in 2025 11 18 to support pickle
 
     def load_txt(self, **kwargs) -> np.ndarray:
         """Load NumPy array from text.

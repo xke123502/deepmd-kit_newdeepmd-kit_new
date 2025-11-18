@@ -121,6 +121,14 @@ class DeepmdData:
         self.add("coord", 3, atomic=True, must=True)
         # the training times of each frame
         self.add("numb_copy", 1, must=False, default=1, dtype=int)
+        # ========== 自动检测并加载 graph.npy（如果存在）==========
+        # 检查第一个 set 是否包含 graph.npy
+        if len(self.dirs) > 0:
+            first_set = self.dirs[0]
+            graph_file = first_set / "graph.npy"
+            if graph_file.is_file():
+                # 自动添加 graph 数据需求
+                self.add("graph", 1, atomic=False, must=False, dtype=object)
         # set counters
         self.set_count = 0
         self.iterator = 0

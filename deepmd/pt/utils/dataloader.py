@@ -244,6 +244,10 @@ def collate_batch(batch):
                 result[key] = [d[key] for d in batch]
             elif key == "type":
                 continue
+            elif key == "graph": # new added in 2025 11 18
+                # graph 是 numpy object array，不能转换为 tensor
+                # 直接保留为 numpy array，在模型中处理
+                result[key] = np.array([d[key] for d in batch])
             else:
                 result[key] = collate_tensor_fn(
                     [torch.as_tensor(d[key]) for d in batch]
