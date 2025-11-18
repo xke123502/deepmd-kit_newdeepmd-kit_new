@@ -48,7 +48,7 @@ from deepmd.pt.model.descriptor.repformer_layer import (
 )
 from deepmd.pt.model.network.mlp import (
     MLPLayer,  # 基础MLP层
-    GatedMLP,
+    GatedMLP, # new add in 2025 1101 - gMLP
 )
 from deepmd.pt.model.network.utils import (
     aggregate,  # 聚合函数
@@ -110,6 +110,10 @@ class RepFlowLayer(torch.nn.Module):
         normalize_coord: bool = False,    # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
         coords_agg: str = "mean",         # new added in 2025 1012 - 坐标聚合方式: 'mean' or 'sum'
         use_symmetry_op: bool = True,  # new added in 2025 1028 - 是否使用对称化操作
+        # new added in 2025 1031 - gMLP（MatRIS风格）参数
+        use_gated_mlp: bool = False,
+        gmlp_targets: list[str] = [],
+        gmlp_norm_type: str = "layer",
     ) -> None:
         super().__init__()
         self.epsilon = 1e-4  # protection of 1./nnei
@@ -161,7 +165,7 @@ class RepFlowLayer(torch.nn.Module):
         
         # new added in 2025 1028 - 对称化操作控制
         self.use_symmetry_op = use_symmetry_op
-        # gMLP（MatRIS风格）配置
+        # new added in 2025 1031 - gMLP（MatRIS风格）配置
         self.use_gated_mlp = use_gated_mlp
         self.gmlp_targets = gmlp_targets
         self.gmlp_norm_type = gmlp_norm_type
@@ -211,12 +215,12 @@ class RepFlowLayer(torch.nn.Module):
             init=init,
             seed=child_seed(seed, 2),
         )
-        # gMLP for node sym (optional)
+        # new added in 2025 1031 - gMLP for node sym (optional)
         self.node_sym_gmlp = (
             GatedMLP(
                 input_dim=self.n_sym_dim,
                 output_dim=n_dim,
-                hidden_dim=0,
+                hidden_dims=[self.n_sym_dim, self.n_sym_dim],
                 norm_type=self.gmlp_norm_type,
                 activation="silu",
             )
@@ -248,7 +252,7 @@ class RepFlowLayer(torch.nn.Module):
             GatedMLP(
                 input_dim=self.edge_info_dim,
                 output_dim=self.n_multi_edge_message * n_dim,
-                hidden_dim=0,
+                hidden_dims=[self.edge_info_dim, self.edge_info_dim],
                 norm_type=self.gmlp_norm_type,
                 activation="silu",
             )
@@ -284,7 +288,7 @@ class RepFlowLayer(torch.nn.Module):
             GatedMLP(
                 input_dim=self.edge_info_dim,
                 output_dim=e_dim,
-                hidden_dim=0,
+                hidden_dims=[self.edge_info_dim, self.edge_info_dim],
                 norm_type=self.gmlp_norm_type,
                 activation="silu",
             )
@@ -358,7 +362,7 @@ class RepFlowLayer(torch.nn.Module):
                 GatedMLP(
                     input_dim=self.angle_dim,
                     output_dim=self.e_dim,
-                    hidden_dim=0,
+                    hidden_dims=[self.angle_dim, self.angle_dim],
                     norm_type=self.gmlp_norm_type,
                     activation="silu",
                 )
@@ -395,7 +399,7 @@ class RepFlowLayer(torch.nn.Module):
                 GatedMLP(
                     input_dim=self.angle_dim,
                     output_dim=self.a_dim,
-                    hidden_dim=0,
+                    hidden_dims=[self.angle_dim, self.angle_dim],
                     norm_type=self.gmlp_norm_type,
                     activation="silu",
                 )
@@ -1111,7 +1115,8 @@ class RepFlowLayer(torch.nn.Module):
                     axis_neuron=self.axis_neuron,
                 )
             )
-            
+            # 将两个GRRG不变量拼接并通过MLP处理
+            #node_sym = self.act(self.node_sym_linear(torch.cat(node_sym_list, dim=-1)))
             # 将两个GRRG不变量拼接并通过MLP或gMLP处理
             node_sym_input = torch.cat(node_sym_list, dim=-1)
             if self.use_gated_mlp and self.node_sym_gmlp is not None:
@@ -1249,6 +1254,7 @@ class RepFlowLayer(torch.nn.Module):
         # 5.6 坐标更新（完全复制节点-边消息传递的模式，new added in 2025 1012）
         # =============================================================================
         # 显式类型注解，告诉TorchScript这是Optional[Tensor]
+        # 因为coor_update不是每个情况都要算的，所以是Optional[Tensor]zh
         coord_update: Optional[torch.Tensor] = None
         if self.update_coord and diff is not None:
             assert self.coord_update_mlp is not None, "coord_update_mlp should be initialized when update_coord=True"
@@ -1281,7 +1287,8 @@ class RepFlowLayer(torch.nn.Module):
                         "coord",  # 
                     )
                 )  # 输出形状: [nf, nloc, nnei, 1] 或 [n_edge, 1]
-            
+        # else :
+        #     coord_update = None # 不知道能不能这么改，因为coord_update的使用在repflows.py.
             # ========== 第2步：应用开关函数（和节点-边消息传递完全一样）==========
             # 注意：节点-边消息传递在这里乘以sw.unsqueeze(-1)
             #coord_weights = coord_weights * sw.unsqueeze(-1) #* 0.001
@@ -1389,8 +1396,14 @@ class RepFlowLayer(torch.nn.Module):
                 )
                 
             # 7.3 构建角度信息（用于角度消息传递）
-            if not self.optim_update:
-                # 标准模式：构建角度信息张量
+            # 如果使用 gMLP，必须构建密集的角度信息（即使 optim_update=True）
+            need_dense_angle_info_for_gmlp = (
+                self.use_gated_mlp and (
+                    (self.edge_angle_gmlp is not None) or (self.angle_self_gmlp is not None)
+                )
+            )
+            if not self.optim_update or need_dense_angle_info_for_gmlp:
+                # 标准模式或 gMLP 模式：构建角度信息张量
                 
                 # 节点信息：为每个角度对复制节点特征
                 # 形状: nb x nloc x a_nnei x a_nnei x n_dim [OR] n_angle x n_dim
@@ -1824,6 +1837,10 @@ class RepFlowLayer(torch.nn.Module):
             "normalize_coord": self.normalize_coord,  # new added in 2025 1012
             "coords_agg": self.coords_agg,  # new added in 2025 1012
             "use_symmetry_op": self.use_symmetry_op,  # new added in 2025 1028
+            # new added in 2025 1031 - gMLP 配置参数
+            "use_gated_mlp": self.use_gated_mlp,
+            "gmlp_targets": self.gmlp_targets,
+            "gmlp_norm_type": self.gmlp_norm_type,
             "node_self_mlp": self.node_self_mlp.serialize(),
             "node_edge_linear": self.node_edge_linear.serialize(),
             "edge_self_linear": self.edge_self_linear.serialize(),
@@ -1852,15 +1869,28 @@ class RepFlowLayer(torch.nn.Module):
                 }
             )
         if self.update_style == "res_residual":
-            data.update(
-                {
-                    "@variables": {
-                        "n_residual": [to_numpy_array(t) for t in self.n_residual],
-                        "e_residual": [to_numpy_array(t) for t in self.e_residual],
-                        "a_residual": [to_numpy_array(t) for t in self.a_residual],
-                    }
-                }
-            )
+            variables = {
+                "n_residual": [to_numpy_array(t) for t in self.n_residual],
+                "e_residual": [to_numpy_array(t) for t in self.e_residual],
+                "a_residual": [to_numpy_array(t) for t in self.a_residual],
+            }
+            # new added in 2025 1031 - gMLP 权重（如果启用）
+            if self.use_gated_mlp:
+                gmlp_vars = {}
+                if self.node_sym_gmlp is not None:
+                    gmlp_vars["node_sym_gmlp"] = {k: to_numpy_array(v) for k, v in self.node_sym_gmlp.state_dict().items()}
+                if self.node_edge_gmlp is not None:
+                    gmlp_vars["node_edge_gmlp"] = {k: to_numpy_array(v) for k, v in self.node_edge_gmlp.state_dict().items()}
+                if self.edge_self_gmlp is not None:
+                    gmlp_vars["edge_self_gmlp"] = {k: to_numpy_array(v) for k, v in self.edge_self_gmlp.state_dict().items()}
+                if self.update_angle:
+                    if self.edge_angle_gmlp is not None:
+                        gmlp_vars["edge_angle_gmlp"] = {k: to_numpy_array(v) for k, v in self.edge_angle_gmlp.state_dict().items()}
+                    if self.angle_self_gmlp is not None:
+                        gmlp_vars["angle_self_gmlp"] = {k: to_numpy_array(v) for k, v in self.angle_self_gmlp.state_dict().items()}
+                if gmlp_vars:
+                    variables.update(gmlp_vars)
+            data.update({"@variables": variables})
         return data
 
     @classmethod
@@ -1925,4 +1955,32 @@ class RepFlowLayer(torch.nn.Module):
                 t.data = to_torch_tensor(e_residual[ii])
             for ii, t in enumerate(obj.a_residual):
                 t.data = to_torch_tensor(a_residual[ii])
+            
+            # new added in 2025 1031 - 恢复 gMLP 权重
+            if obj.use_gated_mlp:
+                # node_sym_gmlp
+                if "node_sym_gmlp" in variables and obj.node_sym_gmlp is not None:
+                    gmlp_state = {k: to_torch_tensor(v) for k, v in variables["node_sym_gmlp"].items()}
+                    obj.node_sym_gmlp.load_state_dict(gmlp_state)
+                
+                # node_edge_gmlp
+                if "node_edge_gmlp" in variables and obj.node_edge_gmlp is not None:
+                    gmlp_state = {k: to_torch_tensor(v) for k, v in variables["node_edge_gmlp"].items()}
+                    obj.node_edge_gmlp.load_state_dict(gmlp_state)
+                
+                # edge_self_gmlp
+                if "edge_self_gmlp" in variables and obj.edge_self_gmlp is not None:
+                    gmlp_state = {k: to_torch_tensor(v) for k, v in variables["edge_self_gmlp"].items()}
+                    obj.edge_self_gmlp.load_state_dict(gmlp_state)
+                
+                # edge_angle_gmlp (仅在 update_angle=True 时)
+                if update_angle:
+                    if "edge_angle_gmlp" in variables and obj.edge_angle_gmlp is not None:
+                        gmlp_state = {k: to_torch_tensor(v) for k, v in variables["edge_angle_gmlp"].items()}
+                        obj.edge_angle_gmlp.load_state_dict(gmlp_state)
+                    
+                    # angle_self_gmlp
+                    if "angle_self_gmlp" in variables and obj.angle_self_gmlp is not None:
+                        gmlp_state = {k: to_torch_tensor(v) for k, v in variables["angle_self_gmlp"].items()}
+                        obj.angle_self_gmlp.load_state_dict(gmlp_state)
         return obj

@@ -305,7 +305,7 @@ class DescrptBlockRepflows(DescriptorBlock):
         normalize_coord: bool = False,  # new added in 2025 1012 - 是否归一化坐标差(类似EGNN)
         coords_agg: str = "mean",  # new added in 2025 1012 - 坐标聚合方式
         use_symmetry_op: bool = True,  # new added in 2025 1028 - 是否使用对称化操作
-        # gMLP 开关（MatRIS风格门控MLP）
+        # new added in 2025 1031 - gMLP 开关（MatRIS风格门控MLP）
         use_gated_mlp: bool = False,
         gmlp_targets: list[str] = [],
         gmlp_norm_type: str = "layer",
@@ -380,7 +380,7 @@ class DescrptBlockRepflows(DescriptorBlock):
         self.coords_agg = coords_agg
         # new added in 2025 1028 - 保存对称化操作控制参数
         self.use_symmetry_op = use_symmetry_op
-        # gMLP 配置
+        # new added in 2025 1031 - gMLP 配置
         self.use_gated_mlp = use_gated_mlp
         self.gmlp_targets = gmlp_targets
         self.gmlp_norm_type = gmlp_norm_type
@@ -450,6 +450,7 @@ class DescrptBlockRepflows(DescriptorBlock):
                     normalize_coord=self.normalize_coord,  # new added in 2025 1012 - Pass normalization flag
                     coords_agg=self.coords_agg,  # new added in 2025 1012 - Pass aggregation method
                     use_symmetry_op=self.use_symmetry_op,  # new added in 2025 1028 - Pass symmetry operation flag
+                    # new added in 2025 1031 - Pass gMLP parameters
                     use_gated_mlp=self.use_gated_mlp,
                     gmlp_targets=self.gmlp_targets,
                     gmlp_norm_type=self.gmlp_norm_type,
@@ -1017,35 +1018,55 @@ class DescrptBlockRepflows(DescriptorBlock):
                 # )
                 # 2. 重新计算边环境矩阵（基于更新后的extended_coord）
                 # =====================================================================
-                dmatrix, diff, sw = prod_env_mat(
-                    extended_coord_new.detach(),  # 使用更新后的坐标
-                    nlist,           # 拓扑不变，复用原始nlist
-                    atype,
-                    self.mean,
-                    self.stddev,
-                    self.e_rcut,
-                    self.e_rcut_smth,
-                    protection=self.env_protection,
-                    use_exp_switch=self.use_exp_switch,
-                )
-                #print("diff", diff.shape)
-                #print("diff", diff)
-                #r = torch.linalg.norm(diff, dim=-1)
-                #print(f"[layer {idx}] env_prot={self.env_protection:.1e} r_min={(r[r>0]).min().item():.3e}")
-                # 更新边几何量（复用原始nlist_mask，拓扑不变）
-                sw = torch.squeeze(sw, -1).masked_fill(~nlist_mask, 0.0)
-                _, h2 = torch.split(dmatrix, [1, 3], dim=-1)  # h2: [nf, nloc, nnei, 3]
-                #epsilon = 1e-6  # 比默认的1e-6大得多
-                #diff_norm = torch.linalg.norm(diff.detach().clone(), dim=-1, keepdim=True)
-                #diff_norm = torch.linalg.norm(diff, dim=-1, keepdim=True)
+                # 如果不用对称化操作，则h2和sw不需要计算
+                # not false = ture 
+                if not self.use_symmetry_op:
+                    dmatrix, diff, _ = prod_env_mat(
+                        extended_coord_new,  # 使用更新后的坐标 # .detach()
+                        nlist,           # 拓扑不变，复用原始nlist
+                        atype,
+                        self.mean,
+                        self.stddev,
+                        self.e_rcut,
+                        self.e_rcut_smth,
+                        protection=self.env_protection,
+                        use_exp_switch=self.use_exp_switch,
+                    )
+                    #sw = torch.squeeze(sw, -1).masked_fill(~nlist_mask, 0.0)
+                    # h2 不更新（如果不需要准确的 rot_mat）
+                    # 或者：_, h2 = torch.split(dmatrix, [1, 3], dim=-1)  如果需要准确的 rot_mat
+                    #if self.use_dynamic_sel:
+                        #sw = sw[nlist_mask]
+                else:
+                    dmatrix, diff, sw = prod_env_mat(
+                        extended_coord_new.detach(),  # 使用更新后的坐标 # .detach()
+                        nlist,           # 拓扑不变，复用原始nlist
+                        atype,
+                        self.mean,
+                        self.stddev,
+                        self.e_rcut,
+                        self.e_rcut_smth,
+                        protection=self.env_protection,
+                        use_exp_switch=self.use_exp_switch,
+                    )
+                    #print("diff", diff.shape)
+                    #print("diff", diff)
+                    #r = torch.linalg.norm(diff, dim=-1)
+                    #print(f"[layer {idx}] env_prot={self.env_protection:.1e} r_min={(r[r>0]).min().item():.3e}")
+                    # 更新边几何量（复用原始nlist_mask，拓扑不变）
+                    sw = torch.squeeze(sw, -1).masked_fill(~nlist_mask, 0.0)
+                    _, h2 = torch.split(dmatrix, [1, 3], dim=-1)  # h2: [nf, nloc, nnei, 3]
+                    #epsilon = 1e-6  # 比默认的1e-6大得多
+                    #diff_norm = torch.linalg.norm(diff.detach().clone(), dim=-1, keepdim=True)
+                    #diff_norm = torch.linalg.norm(diff, dim=-1, keepdim=True)
 
-                #h2 = diff / (diff_norm + epsilon)  # 避免除以很小的数
-                #h2 = diff
-                #h2 = h2_new.detach().clone()
-                if self.use_dynamic_sel:
-                    # 扁平化以匹配动态选择的数据流
-                    h2 = h2[nlist_mask]   # [n_edge, 3]
-                    sw = sw[nlist_mask]   # [n_edge]
+                    #h2 = diff / (diff_norm + epsilon)  # 避免除以很小的数
+                    #h2 = diff
+                    #h2 = h2_new.detach().clone()
+                    if self.use_dynamic_sel:
+                        # 扁平化以匹配动态选择的数据流
+                        h2 = h2[nlist_mask]   # [n_edge, 3]
+                        sw = sw[nlist_mask]   # [n_edge]
 
                 # 角度权重a_sw重算：保持与更新后的坐标一致
             '''

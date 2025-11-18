@@ -300,6 +300,10 @@ class Trainer:
             resuming=resuming,
             _loss_params=loss_param_tmp,
         )
+        
+        # 如果模型支持预计算图，设置 systems 路径 added in 2025-11-13
+        # 注意：set_systems 需要在数据加载器创建之后调用，以便从实际的数据加载器中获取 systems 路径
+        # 这样确保 sid 索引能正确对应
 
         # Loss
         if not self.multi_task:
@@ -350,6 +354,15 @@ class Trainer:
                     "validation",
                     to_numpy_array(self.validation_dataloader.sampler.weights),
                 )
+            
+            # ========== 改动：支持预计算图时设置 systems 路径 (new added in 2025-11-14) ==========
+            # 目的：让模型知道training和validation的system路径，以便根据is_train选择正确的路径
+            # 时机：在数据加载器创建之后调用，确保从实际的数据加载器中获取正确的systems路径
+            # 这样确保 sid 索引能正确对应到对应的systems列表
+            if hasattr(self.model, 'set_systems'): # 单任务情况
+                train_systems = [ss.system for ss in training_data.systems]
+                valid_systems = [ss.system for ss in validation_data.systems] if validation_data is not None else []
+                self.model.set_systems(train_systems, valid_systems)
         else:
             (
                 self.training_dataloader,
@@ -399,6 +412,19 @@ class Trainer:
                             self.validation_dataloader[model_key].sampler.weights
                         ),
                     )
+            
+            # 如果模型支持预计算图，设置 systems 路径（从实际的数据加载器中获取）
+            if hasattr(self.model, 'set_systems'): # 多任务情况，应该基本不适用于matris.
+                # multi_task 情况下，需要为每个 model_key 设置 systems
+                for model_key in self.model_keys:
+                    train_systems = [ss.system for ss in training_data[model_key].systems]
+                    valid_systems = [ss.system for ss in validation_data[model_key].systems] if (
+                        validation_data is not None and validation_data[model_key] is not None
+                    ) else []
+                    # 注意：multi_task 时，set_systems 可能需要特殊处理，这里假设每个 model_key 独立设置
+                    # 如果模型不支持 per-key 设置，可能需要调整
+                    if hasattr(self.model[model_key], 'set_systems'):
+                        self.model[model_key].set_systems(train_systems, valid_systems)
 
         # Learning rate
         self.warmup_steps = training_params.get("warmup_steps", 0)
@@ -726,9 +752,11 @@ class Trainer:
                     pref_lr = _lr.start_lr
                 else:
                     pref_lr = cur_lr
+                # ========== 改动：Training时传递 is_train=True (new added in 2025-11-14) ==========
+                # 目的：让模型知道这是training阶段，使用train_systems列表加载预计算图
                 model_pred, loss, more_loss = self.wrapper(
-                    **input_dict, cur_lr=pref_lr, label=label_dict, task_key=task_key
-                )
+                    **input_dict, cur_lr=pref_lr, label=label_dict, task_key=task_key, is_train=True
+                ) # is_train是新增参数，用于区分training和validation阶段，决定使用哪个systems列表加载预计算图
                 loss.backward()
                 if self.gradient_max_norm > 0.0:
                     torch.nn.utils.clip_grad_norm_(
@@ -842,11 +870,15 @@ class Trainer:
                         if input_dict == {}:
                             # no validation data
                             return {}
+                        # ========== 改动：Validation时传递 is_train=False (new added in 2025-11-14) ==========
+                        # 目的：让模型知道这是validation阶段，使用valid_systems列表加载预计算图
+                        # 关键：validation的sid应该索引valid_systems，而不是train_systems
                         _, loss, more_loss = self.wrapper(
                             **input_dict,
                             cur_lr=pref_lr,
                             label=label_dict,
                             task_key=_task_key,
+                            is_train=False,
                         )
                         # more_loss.update({"rmse": math.sqrt(loss)})
                         natoms = int(input_dict["atype"].shape[-1])
@@ -892,11 +924,13 @@ class Trainer:
                             input_dict, label_dict, _ = self.get_data(
                                 is_train=True, task_key=_key
                             )
+                            # ========== 改动：Multi-task training时传递 is_train=True (new added in 2025-11-14) ==========
                             _, loss, more_loss = self.wrapper(
                                 **input_dict,
                                 cur_lr=pref_lr,
                                 label=label_dict,
                                 task_key=_key,
+                                is_train=True,
                             )
                             train_results[_key] = log_loss_train(
                                 loss, more_loss, _task_key=_key
@@ -1105,7 +1139,10 @@ class Trainer:
             return {}, {}, {}
         batch_data = next(iterator)
         for key in batch_data.keys():
-            if key == "sid" or key == "fid" or key == "box" or "find_" in key:
+            if key == "box" or "find_" in key:
+                continue
+            # Skip sid and fid as they are not tensors (new added in 2025-11-14)
+            if key in ["sid", "fid"]:
                 continue
             elif not isinstance(batch_data[key], list):
                 if batch_data[key] is not None:
@@ -1123,6 +1160,8 @@ class Trainer:
             "box",
             "fparam",
             "aparam",
+            "sid", # new added in 2025-11-14
+            "fid", # new added in 2025-11-13
         ]
         input_dict = dict.fromkeys(input_keys)
         label_dict = {}

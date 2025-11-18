@@ -1,0 +1,70 @@
+# DPA3 model with MatRIS-style Gated MLP (gMLP) enabled
+model:
+  type_map:
+    - H
+    - C
+    - N
+    - O
+  
+  descriptor:
+    type: dpa3
+    repflow:
+      # 基础维度配置
+      n_dim: 128
+      e_dim: 64
+      a_dim: 32
+      nlayers: 4
+      
+      # 截断半径配置
+      e_rcut: 6.0
+      e_rcut_smth: 5.3
+      e_sel: 300
+      a_rcut: 4.5
+      a_rcut_smth: 4.0
+      a_sel: 100
+      
+      # RepFlow 参数
+      axis_neuron: 4
+      update_angle: true
+      smooth_edge_update: true
+      use_symmetry_op: true
+      update_style: res_residual
+      activation_function: silu
+      
+      # gMLP (MatRIS-style) 配置
+      use_gated_mlp: true
+      gmlp_targets:
+        - node_sym      # 节点对称化更新 (GRRG不变量)
+        - node_edge     # 节点-边消息传递
+        - edge_self      # 边自更新
+        - edge_angle     # 边-角度消息传递
+        - angle_self     # 角度自更新
+      gmlp_norm_type: layer    # "layer" 或 "rms"
+  
+  fitting_net:
+    type: ener
+    neuron: [128, 128, 128]
+    resnet_dt: true
+    activation_function: tanh
+
+learning_rate:
+  type: exp
+  start_lr: 0.001
+  decay_steps: 5000
+  decay_rate: 0.95
+
+loss:
+  type: ener
+  start_pref_e: 0.02
+  limit_pref_e: 1.0
+  start_pref_f: 1000.0
+  limit_pref_f: 1.0
+
+training:
+  seed: 42
+  stop_batch: 100000
+  numb_steps: 1000
+  disp_file: lcurve.out
+  disp_freq: 100
+  save_freq: 1000
+

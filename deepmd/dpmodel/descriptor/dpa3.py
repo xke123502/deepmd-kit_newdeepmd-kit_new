@@ -242,7 +242,7 @@ class RepFlowArgs:
         self.coords_agg = coords_agg
         # new added in 2025 1028 - 保存对称化操作控制参数
         self.use_symmetry_op = use_symmetry_op
-        # gMLP
+        # new added in 2025 1031 - gMLP 配置
         self.use_gated_mlp = use_gated_mlp
         self.gmlp_targets = gmlp_targets
         self.gmlp_norm_type = gmlp_norm_type

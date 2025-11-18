@@ -571,13 +571,20 @@ class NetworkCollection(DPNetworkCollection, nn.Module):
 # =============================================================================
 
 class GatedMLP(nn.Module):
-    """MatRIS-style gated MLP: SiLU(Norm(core(MLP(x)))) * Sigmoid(Norm(gate(MLP(x))))
+    """MatRIS-style gated MLP (pure PyTorch):
+    out = SiLU(Norm(Core(x))) * Sigmoid(Norm(Gate(x)))
 
-    Notes
-    -----
-    - 默认使用无隐层（与当前 RepFlow 单层 MLP 对齐）；后续可扩展多层。
-    - 归一化支持: LayerNorm / RMSNorm（PyTorch 2.8）。
-    - 激活固定使用 SiLU（主分支）与 Sigmoid（门分支）。
+    - Core/Gate: optional multi-layer perceptron (Linear + Act + Dropout ... + Linear)
+    - Norm: LayerNorm or RMSNorm on the output_dim
+    - Activations: core=SiLU, gate=Sigmoid
+
+    Parameters
+    ----------
+    hidden_dims : Optional[Union[int, list[int]]], optional
+        隐层维度配置。None 表示使用 MatRIS 默认的两层结构 [input_dim, input_dim]。
+        0 表示无隐层（直接 input_dim -> output_dim）。
+        int 表示单层隐层。
+        list[int] 表示多层隐层。
     """
 
     def __init__(
@@ -585,7 +592,7 @@ class GatedMLP(nn.Module):
         input_dim: int,
         output_dim: int,
         *,
-        hidden_dim: Optional[Union[int, list[int]]] = None,
+        hidden_dims: Optional[Union[int, list[int]]] = None,  # None = MatRIS default [input_dim, input_dim]
         norm_type: str = "layer",
         activation: str = "silu",
         dropout: float = 0.0,
@@ -593,25 +600,35 @@ class GatedMLP(nn.Module):
     ) -> None:
         super().__init__()
 
-        # 主/门分支的多层感知机（复用本文件的 MLP）
-        self.core_mlp = MLP(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim if hidden_dim is not None else 0,
-            output_dim=output_dim,
-            dropout=dropout,
-            activation=activation,
-            bias=bias,
-        )
-        self.gate_mlp = MLP(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim if hidden_dim is not None else 0,
-            output_dim=output_dim,
-            dropout=dropout,
-            activation=activation,
-            bias=bias,
-        )
+        # build internal MLP (pure torch) for a branch
+        def build_branch() -> nn.Sequential:
+            layers: list[nn.Module] = []
+            act = ActivationFn(activation)
+            # 默认对齐 MatRIS：两层、各为 input_dim
+            if hidden_dims is None:
+                dims = [input_dim, input_dim]
+            elif hidden_dims == 0:
+                dims = []
+            else:
+                dims = [hidden_dims] if isinstance(hidden_dims, int) else list(hidden_dims)
 
-        # 归一化与激活
+            if len(dims) == 0:
+                # 无隐层：直接 Linear 到输出
+                layers.append(nn.Linear(input_dim, output_dim, bias=bias))
+            else:
+                in_dim = input_dim
+                for hd in dims:
+                    layers.append(nn.Linear(in_dim, hd, bias=bias))
+                    layers.append(act)
+                    if dropout > 0.0:
+                        layers.append(nn.Dropout(dropout))
+                    in_dim = hd
+                layers.append(nn.Linear(in_dim, output_dim, bias=bias))
+            return nn.Sequential(*layers)
+
+        self.core = build_branch()
+        self.gate = build_branch()
+
         if norm_type == "layer":
             self.core_norm = nn.LayerNorm(output_dim)
             self.gate_norm = nn.LayerNorm(output_dim)
@@ -619,12 +636,12 @@ class GatedMLP(nn.Module):
             self.core_norm = nn.RMSNorm(output_dim)
             self.gate_norm = nn.RMSNorm(output_dim)
         else:
-            raise ValueError("Unsupported norm_type for GatedMLP: %s" % norm_type)
+            raise ValueError(f"Unsupported norm_type: {norm_type}")
 
         self.core_act = ActivationFn("silu")
         self.gate_act = ActivationFn("sigmoid")
 
     def forward(self, xx: torch.Tensor) -> torch.Tensor:
-        core = self.core_act(self.core_norm(self.core_mlp(xx)))
-        gate = self.gate_act(self.gate_norm(self.gate_mlp(xx)))
+        core = self.core_act(self.core_norm(self.core(xx)))
+        gate = self.gate_act(self.gate_norm(self.gate(xx)))
         return core * gate
