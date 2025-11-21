@@ -128,7 +128,7 @@ class DeepmdData:
             graph_file = first_set / "graph.npy"
             if graph_file.is_file():
                 # 自动添加 graph 数据需求
-                self.add("graph", 1, atomic=False, must=False, dtype=object)
+                self.add("graph", 1, atomic=False, must=False, dtype=object) # 将信息存储到self.data_dict字典
         # set counters
         self.set_count = 0
         self.iterator = 0
@@ -347,8 +347,10 @@ class DeepmdData:
 
     def get_numb_batch(self, batch_size: int, set_idx: int) -> int:
         """Get the number of batches in a set."""
-        data = self._load_set(self.dirs[set_idx])
-        ret = data["coord"].shape[0] // batch_size
+        #data = self._load_set(self.dirs[set_idx])
+        #ret = data["coord"].shape[0] // batch_size
+        n_frames = self._get_nframes(self.dirs[set_idx]) # new added in 2025 11 21
+        ret = n_frames // batch_size # new added in 2025 11 21
         if ret == 0:
             ret = 1
         return ret
@@ -532,8 +534,8 @@ class DeepmdData:
         for kk in self.data_dict.keys():
             if self.data_dict[kk]["reduce"] is None:
                 data["find_" + kk], data[kk] = self._load_data(
-                    set_name,
-                    kk,
+                    set_name, # set.***
+                    kk, # coord, energy, force, hessian, graph
                     nframes,
                     self.data_dict[kk]["ndof"],
                     atomic=self.data_dict[kk]["atomic"],
@@ -637,9 +639,9 @@ class DeepmdData:
             dtype = GLOBAL_ENER_FLOAT_PRECISION
         else:
             dtype = GLOBAL_NP_FLOAT_PRECISION
-        path = set_name / (key + ".npy")
+        path = set_name / (key + ".npy") # key: coord, energy, force, hessian, graph， graph.npy是新加的。
         if path.is_file():
-            data = path.load_numpy().astype(dtype)
+            data = path.load_numpy().astype(dtype) # 返回 data["graph"] = numpy object array. 读取graph.npy
             try:  # YWolfeee: deal with data shape error
                 if atomic:
                     if type_sel is not None:
